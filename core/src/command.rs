@@ -99,6 +99,10 @@ pub enum LapceWorkbenchCommand {
     #[strum(message = "Open Settings")]
     OpenSettings,
 
+    #[strum(serialize = "change_shell")]
+    #[strum(message = "Change Shell")]
+    ChangeShell,
+
     #[strum(serialize = "open_keyboard_shortcuts")]
     #[strum(message = "Open Keyboard Shortcuts")]
     OpenKeyboardShortcuts,

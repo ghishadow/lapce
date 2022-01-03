@@ -750,6 +750,13 @@ impl LapceTabData {
                     );
                 }
             }
+            LapceWorkbenchCommand::ChangeShell => {
+                ctx.submit_command(Command::new(
+                    LAPCE_UI_COMMAND,
+                    LapceUICommand::RunPalette(Some(PaletteType::Shell)),
+                    Target::Widget(self.palette.widget_id),
+                ));
+            }
             LapceWorkbenchCommand::OpenKeyboardShortcuts => {
                 if let Some(proj_dirs) = ProjectDirs::from("", "", "Lapce") {
                     std::fs::create_dir_all(proj_dirs.config_dir());

@@ -71,6 +71,7 @@ pub enum PaletteType {
     Command,
     Reference,
     Theme,
+    Shell,
 }
 
 impl PaletteType {
@@ -84,6 +85,7 @@ impl PaletteType {
             PaletteType::Command => ":".to_string(),
             PaletteType::Reference => "".to_string(),
             PaletteType::Theme => "".to_string(),
+            PaletteType::Shell => "".to_string(),
         }
     }
 
@@ -549,6 +551,7 @@ impl PaletteData {
             PaletteType::File => &self.input,
             PaletteType::Reference => &self.input,
             PaletteType::Theme => &self.input,
+            PaletteType::Shell => &self.input,
             PaletteType::Line => &self.input[1..],
             PaletteType::DocumentSymbol => &self.input[1..],
             PaletteType::Workspace => &self.input[1..],
@@ -647,6 +650,10 @@ impl PaletteViewData {
             &PaletteType::Theme => {
                 let config = self.config.clone();
                 self.get_themes(ctx, &config);
+            }
+            &PaletteType::Shell => {
+                let config = self.config.clone();
+                self.get_shells(ctx, &config);
             }
         }
     }
@@ -839,6 +846,10 @@ impl PaletteViewData {
                 indices: vec![],
             })
             .collect();
+    }
+
+    fn get_shells(&mut self, ctx: &mut EventCtx, config: &Config) {
+        let palette = Arc::make_mut(&mut self.palette);
     }
 
     fn get_commands(&mut self, ctx: &mut EventCtx) {

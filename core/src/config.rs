@@ -107,6 +107,8 @@ pub struct Config {
     pub theme: HashMap<String, Color>,
     #[serde(skip)]
     pub themes: HashMap<String, HashMap<String, Color>>,
+    pub shell: String,
+    pub shells: Vec<String>,
 }
 
 impl Config {
