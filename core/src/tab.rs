@@ -37,6 +37,7 @@ use crate::{
     palette::{NewPalette, PaletteViewLens},
     panel::{PanelPosition, PanelResizePosition},
     plugin::Plugin,
+    problem::Problem,
     scroll::LapceScrollNew,
     source_control::SourceControlNew,
     split::LapceSplitNew,
@@ -44,6 +45,12 @@ use crate::{
     status::LapceStatusNew,
     terminal::TerminalPanel,
 };
+
+pub struct LapceIcon {
+    pub rect: Rect,
+    pub command: Command,
+    pub icon: String,
+}
 
 pub struct LapceTabNew {
     id: WidgetId,
@@ -102,6 +109,9 @@ impl LapceTabNew {
 
         let terminal = TerminalPanel::new(&data);
         panels.insert(data.terminal.widget_id, WidgetPod::new(terminal.boxed()));
+
+        let problem = Problem::new(&data);
+        panels.insert(data.problem.widget_id, WidgetPod::new(problem.boxed()));
 
         Self {
             id: data.id,
@@ -287,6 +297,7 @@ impl Widget<LapceTabData> for LapceTabNew {
                                 ),
                                 Target::Widget(terminal.split_id),
                             ));
+                            data.proxy.terminal_close(terminal.term_id);
                         }
                         ctx.set_handled();
                     }
