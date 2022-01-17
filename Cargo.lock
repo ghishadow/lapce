@@ -1125,7 +1125,7 @@ checksum = "9ea835d29036a4087793836fa931b08837ad5e957da9e23886b29586fb9b6650"
 [[package]]
 name = "druid"
 version = "0.7.0"
-source = "git+https://github.com/lapce/druid#cdfb3084c0e94cfab1822be62ba87fa1247678f4"
+source = "git+https://github.com/lapce/druid#95ff89ec7a079b1c25e049b4496d1d8fe6ce17f4"
 dependencies = [
  "console_error_panic_hook",
  "druid-derive",
@@ -1149,7 +1149,7 @@ dependencies = [
 [[package]]
 name = "druid-derive"
 version = "0.4.0"
-source = "git+https://github.com/lapce/druid#cdfb3084c0e94cfab1822be62ba87fa1247678f4"
+source = "git+https://github.com/lapce/druid#95ff89ec7a079b1c25e049b4496d1d8fe6ce17f4"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1159,7 +1159,7 @@ dependencies = [
 [[package]]
 name = "druid-shell"
 version = "0.7.0"
-source = "git+https://github.com/lapce/druid#cdfb3084c0e94cfab1822be62ba87fa1247678f4"
+source = "git+https://github.com/lapce/druid#95ff89ec7a079b1c25e049b4496d1d8fe6ce17f4"
 dependencies = [
  "anyhow",
  "cfg-if 1.0.0",
@@ -1289,9 +1289,9 @@ checksum = "398ea4fabe40b9b0d885340a2a991a44c8a645624075ad966d21f88688e2b69e"
 
 [[package]]
 name = "flate2"
-version = "1.0.21"
+version = "1.0.22"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "80edafed416a46fb378521624fab1cfa2eb514784fd8921adbe8a8d8321da811"
+checksum = "1e6988e897c1c9c485f43b47a529cef42fde0547f9d8d41a7062518f1d8fc53f"
 dependencies = [
  "cfg-if 1.0.0",
  "crc32fast",
@@ -2139,7 +2139,7 @@ dependencies = [
 
 [[package]]
 name = "lapce"
-version = "0.0.4"
+version = "0.0.5"
 dependencies = [
  "lapce-core",
  "lapce-proxy",
@@ -2147,7 +2147,7 @@ dependencies = [
 
 [[package]]
 name = "lapce-core"
-version = "0.0.1"
+version = "0.0.5"
 dependencies = [
  "alacritty_terminal 0.15.0",
  "anyhow",
@@ -2159,6 +2159,7 @@ dependencies = [
  "crossbeam-utils 0.8.5",
  "directories",
  "druid",
+ "flate2",
  "fuzzy-matcher",
  "fzyr",
  "hashbrown 0.11.2",
@@ -2196,7 +2197,7 @@ dependencies = [
 
 [[package]]
 name = "lapce-proxy"
-version = "0.0.1"
+version = "0.0.5"
 dependencies = [
  "alacritty_terminal 0.16.0-rc2",
  "anyhow",

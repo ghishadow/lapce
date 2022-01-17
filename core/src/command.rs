@@ -38,6 +38,7 @@ pub const LAPCE_UI_COMMAND: Selector<LapceUICommand> =
 #[derive(Clone, Debug)]
 pub struct LapceCommandNew {
     pub cmd: String,
+    pub data: Option<serde_json::Value>,
     pub palette_desc: Option<String>,
     pub target: CommandTarget,
 }
@@ -53,12 +54,19 @@ pub enum CommandTarget {
     Plugin(String),
 }
 
+#[derive(PartialEq)]
+pub enum CommandExecuted {
+    Yes,
+    No,
+}
+
 pub fn lapce_internal_commands() -> IndexMap<String, LapceCommandNew> {
     let mut commands = IndexMap::new();
 
     for c in LapceWorkbenchCommand::iter() {
         let command = LapceCommandNew {
             cmd: c.to_string(),
+            data: None,
             palette_desc: c.get_message().map(|m| m.to_string()),
             target: CommandTarget::Workbench,
         };
@@ -68,6 +76,7 @@ pub fn lapce_internal_commands() -> IndexMap<String, LapceCommandNew> {
     for c in LapceCommand::iter() {
         let command = LapceCommandNew {
             cmd: c.to_string(),
+            data: None,
             palette_desc: c.get_message().map(|m| m.to_string()),
             target: CommandTarget::Focus,
         };
@@ -138,11 +147,14 @@ pub enum LapceWorkbenchCommand {
     #[strum(serialize = "palette.workspace")]
     PaletteWorkspace,
 
-    #[strum(serialize = "toggle_terminal")]
-    ToggleTerminal,
-
     #[strum(serialize = "toggle_maximized_panel")]
     ToggleMaximizedPanel,
+
+    #[strum(serialize = "hide_panel")]
+    HidePanel,
+
+    #[strum(serialize = "toggle_terminal")]
+    ToggleTerminal,
 
     #[strum(serialize = "toggle_source_control")]
     ToggleSourceControl,
@@ -303,8 +315,9 @@ pub enum LapceCommand {
     NextError,
     #[strum(serialize = "previous_error")]
     PreviousError,
-    #[strum(serialize = "document_formatting")]
-    DocumentFormatting,
+    #[strum(serialize = "format_document")]
+    #[strum(message = "Format Document")]
+    FormatDocument,
     #[strum(serialize = "save")]
     Save,
     #[strum(serialize = "show_code_actions")]
@@ -432,6 +445,7 @@ pub enum LapceUICommand {
     RequestPaintRect(Rect),
     ApplyEdits(usize, u64, Vec<TextEdit>),
     ApplyEditsAndSave(usize, u64, Result<Value>),
+    DocumentFormat(PathBuf, u64, Result<Value>),
     DocumentFormatAndSave(PathBuf, u64, Result<Value>),
     BufferSave(PathBuf, u64),
     UpdateSemanticTokens(BufferId, PathBuf, u64, Vec<(usize, usize, String)>),

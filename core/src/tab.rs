@@ -37,7 +37,6 @@ use crate::{
     palette::{NewPalette, PaletteViewLens},
     panel::{PanelPosition, PanelResizePosition},
     plugin::Plugin,
-    problem::Problem,
     scroll::LapceScrollNew,
     source_control::SourceControlNew,
     split::LapceSplitNew,
@@ -110,7 +109,7 @@ impl LapceTabNew {
         let terminal = TerminalPanel::new(&data);
         panels.insert(data.terminal.widget_id, WidgetPod::new(terminal.boxed()));
 
-        let problem = Problem::new(&data);
+        let problem = data.problem.new_panel();
         panels.insert(data.problem.widget_id, WidgetPod::new(problem.boxed()));
 
         Self {
@@ -394,6 +393,10 @@ impl Widget<LapceTabData> for LapceTabNew {
                     LapceUICommand::DocumentFormatAndSave(path, rev, result) => {
                         data.main_split
                             .document_format_and_save(ctx, path, *rev, result);
+                        ctx.set_handled();
+                    }
+                    LapceUICommand::DocumentFormat(path, rev, result) => {
+                        data.main_split.document_format(ctx, path, *rev, result);
                         ctx.set_handled();
                     }
                     LapceUICommand::BufferSave(path, rev) => {
