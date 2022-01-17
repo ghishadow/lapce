@@ -47,6 +47,7 @@ pub enum LapceLanguage {
     Javascript,
     Go,
     Yaml,
+    Wgsl,
 }
 
 impl LapceLanguage {
@@ -60,6 +61,7 @@ impl LapceLanguage {
             "go" => LapceLanguage::Go,
             "yaml" => LapceLanguage::Yaml,
             "yml" => LapceLanguage::Yaml,
+            "wgsl" => LapceLanguage::Wgsl,
             _ => return None,
         })
     }
@@ -146,6 +148,21 @@ pub fn new_highlight_config(language: LapceLanguage) -> HighlightConfiguration {
             configuration.configure(&SCOPES);
             configuration
         }
+        LapceLanguage::Wgsl => {
+            let mut configuration = HighlightConfiguration::new(
+                unsafe { tree_sitter_wgsl() },
+                QUERIES_DIR
+                    .get_file("go/highlights.scm")
+                    .unwrap()
+                    .contents_utf8()
+                    .unwrap(),
+                "",
+                "",
+            )
+            .unwrap();
+            configuration.configure(&SCOPES);
+            configuration
+        }
     }
 }
 
@@ -156,6 +173,7 @@ pub fn new_parser(language: LapceLanguage) -> Parser {
         LapceLanguage::Javascript => unsafe { tree_sitter_javascript() },
         LapceLanguage::Go => unsafe { tree_sitter_go() },
         LapceLanguage::Yaml => unsafe { tree_sitter_yaml() },
+        LapceLanguage::Wgsl => unsafe { tree_sitter_wgsl() },
     };
     let mut parser = Parser::new();
     parser.set_language(language).unwrap();
@@ -168,6 +186,7 @@ extern "C" {
     fn tree_sitter_yaml() -> Language;
     fn tree_sitter_go() -> Language;
     fn tree_sitter_javascript() -> Language;
+    fn tree_sitter_wgsl() -> Language;
 }
 
 // impl TreeSitter {

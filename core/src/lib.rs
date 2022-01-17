@@ -1,3 +1,4 @@
+#![allow(warnings)]
 pub mod activity;
 pub mod app;
 pub mod buffer;
