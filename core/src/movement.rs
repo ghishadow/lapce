@@ -75,6 +75,28 @@ impl Cursor {
         buffer.line_of_offset(self.offset())
     }
 
+    pub fn current_char(
+        &self,
+        text: &mut PietText,
+        buffer: &BufferNew,
+        config: &Config,
+    ) -> (f64, f64) {
+        let offset = self.offset();
+        let line = buffer.line_of_offset(self.offset());
+        let next = buffer.next_grapheme_offset(
+            offset,
+            1,
+            buffer.offset_line_end(offset, true),
+        );
+
+        let (_, x0) = buffer.offset_to_line_col(offset);
+        let (_, x1) = buffer.offset_to_line_col(next);
+        let width = config.editor_text_width(text, "W");
+        let x0 = x0 as f64 * width;
+        let x1 = x1 as f64 * width;
+        (x0, x1)
+    }
+
     pub fn lines(&self, buffer: &BufferNew) -> (usize, usize) {
         match &self.mode {
             CursorMode::Normal(offset) => {
