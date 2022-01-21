@@ -21,7 +21,6 @@ use xi_rope::spans::Spans;
 use crate::{
     buffer::BufferId,
     buffer::{InvalLines, Style},
-    data::EditorKind,
     editor::{EditorLocation, EditorLocationNew, HighlightTextLayout},
     movement::{LinePosition, Movement},
     palette::{NewPaletteItem, PaletteType},
@@ -153,6 +152,12 @@ pub enum LapceWorkbenchCommand {
     #[strum(serialize = "hide_panel")]
     HidePanel,
 
+    #[strum(serialize = "show_panel")]
+    ShowPanel,
+
+    #[strum(serialize = "toggle_panel")]
+    TogglePanel,
+
     #[strum(serialize = "toggle_terminal")]
     ToggleTerminal,
 
@@ -167,6 +172,9 @@ pub enum LapceWorkbenchCommand {
 
     #[strum(serialize = "toggle_problem")]
     ToggleProblem,
+
+    #[strum(serialize = "toggle_search")]
+    ToggleSearch,
 
     #[strum(serialize = "focus_editor")]
     FocusEditor,
@@ -482,8 +490,9 @@ pub enum LapceUICommand {
     ScrollTo((f64, f64)),
     ForceScrollTo(f64, f64),
     CloseTerminal(TermId),
-    SplitTerminal(bool, WidgetId, Option<WidgetId>),
-    SplitTerminalClose(TermId, WidgetId, Option<WidgetId>),
+    SplitTerminal(bool, WidgetId),
+    SplitTerminalClose(TermId, WidgetId),
+    SplitAddEditor(WidgetId),
     SplitEditor(bool, WidgetId),
     SplitEditorMove(SplitMoveDirection, WidgetId),
     SplitEditorExchange(WidgetId),
@@ -492,9 +501,9 @@ pub enum LapceUICommand {
     SplitExchange,
     SplitClose,
     SplitMove(SplitMoveDirection),
-    JumpToPosition(EditorKind, Position),
-    JumpToLine(EditorKind, usize),
-    JumpToLocation(EditorKind, EditorLocationNew),
+    JumpToPosition(Option<WidgetId>, Position),
+    JumpToLine(Option<WidgetId>, usize),
+    JumpToLocation(Option<WidgetId>, EditorLocationNew),
     TerminalJumpToLine(i32),
     GoToLocationNew(WidgetId, EditorLocationNew),
     GotoReference(WidgetId, usize, EditorLocationNew),

@@ -15,10 +15,10 @@ use lsp_types::DiagnosticSeverity;
 use crate::{
     command::{LapceUICommand, LAPCE_UI_COMMAND},
     config::LapceTheme,
-    data::{EditorDiagnostic, EditorKind, FocusArea, LapceTabData, PanelKind},
+    data::{EditorDiagnostic, FocusArea, LapceTabData, PanelKind},
     editor::EditorLocationNew,
     panel::{LapcePanel, PanelHeaderKind, PanelSection},
-    split::LapceSplitNew,
+    split::{LapceSplitNew, SplitDirection},
     svg::{file_svg_new, get_svg},
 };
 
@@ -41,19 +41,23 @@ impl ProblemData {
 
     pub fn new_panel(&self) -> LapcePanel {
         LapcePanel::new(
+            PanelKind::Problem,
             self.widget_id,
             self.split_id,
-            PanelHeaderKind::simple("Problem".to_string()),
+            SplitDirection::Vertical,
+            PanelHeaderKind::Simple("Problem".to_string()),
             vec![
                 (
                     self.error_widget_id,
-                    PanelHeaderKind::simple("Errors".to_string()),
+                    PanelHeaderKind::Simple("Errors".to_string()),
                     ProblemContent::new(DiagnosticSeverity::Error).boxed(),
+                    None,
                 ),
                 (
                     self.warning_widget_id,
-                    PanelHeaderKind::simple("Warnings".to_string()),
+                    PanelHeaderKind::Simple("Warnings".to_string()),
                     ProblemContent::new(DiagnosticSeverity::Warning).boxed(),
+                    None,
                 ),
             ],
         )
@@ -131,7 +135,7 @@ impl ProblemContent {
                     ctx.submit_command(Command::new(
                         LAPCE_UI_COMMAND,
                         LapceUICommand::JumpToLocation(
-                            EditorKind::SplitActive,
+                            None,
                             EditorLocationNew {
                                 path: path.clone(),
                                 position: Some(
@@ -160,7 +164,7 @@ impl ProblemContent {
                         ctx.submit_command(Command::new(
                             LAPCE_UI_COMMAND,
                             LapceUICommand::JumpToLocation(
-                                EditorKind::SplitActive,
+                                None,
                                 EditorLocationNew {
                                     path: related
                                         .location

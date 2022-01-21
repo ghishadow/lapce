@@ -23,6 +23,7 @@ pub mod plugin;
 pub mod problem;
 pub mod proxy;
 pub mod scroll;
+pub mod search;
 pub mod signature;
 pub mod source_control;
 pub mod split;
