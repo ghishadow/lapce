@@ -3,6 +3,8 @@ name: Release
 on:
   push:
     tags: ["v[0-9]+.[0-9]+.[0-9]+*"]
+    branches:
+      - scoop_build
 
 env:
   GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -10,25 +12,30 @@ env:
 
 jobs:
   windows:
-    runs-on: windows-latest
+    runs-on: windows-2022
+
+    strategy:
+      matrix:
+        include:
+        - version: stable
+          target: x86_64-pc-windows-msvc
 
     defaults:
       run:
         shell: bash
 
     steps:
+      - name: Checkout
       - uses: actions/checkout@v2
-      - name: Update rust
-        run: rustup update
+      - name: Update rust toolchain
+        run: rustup update --no-self-update ${{ matrix.version }} && rustup default ${{ matrix.version }}
       - name: Build
         run: cargo build --release
-      - name: Install WiX
-        run: nuget install WiX
-      - name: Crate msi installer
+      - name: Create msi installer
         run: |
-          ./WiX.*/tools/candle.exe -arch "x64" -ext WixUIExtension -ext WixUtilExtension \
+          candle.exe -arch "x64" -ext WixUIExtension -ext WixUtilExtension \
             -out "./lapce.wixobj" "extra/windows/wix/lapce.wxs"
-          ./WiX.*/tools/light.exe -ext WixUIExtension -ext WixUtilExtension \
+          light.exe -ext WixUIExtension -ext WixUtilExtension \
             -out "./Lapce-windows.msi" -sice:ICE61 -sice:ICE91 \
             "./lapce.wixobj"
       - name: Upload msi installer

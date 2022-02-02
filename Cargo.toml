@@ -19,3 +19,11 @@ path = "proxy/src/bin/lapce-proxy.rs"
 
 [workspace]
 members = ["core", "proxy", "rpc"]
+
+[profile.dev]
+split-debuginfo = "unpacked"
+
+[profile.release]
+codegen-units = 1
+lto = "true"
+# debug = true
