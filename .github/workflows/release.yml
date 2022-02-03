@@ -31,11 +31,13 @@ jobs:
         run: rustup update --no-self-update ${{ matrix.version }} && rustup default ${{ matrix.version }}
       - name: Build
         run: cargo build --release
-      - name: Create msi installer
+      - name: Install WiX
+        run: nuget install WiX
+      - name: Crate msi installer
         run: |
-          candle.exe -arch "x64" -ext WixUIExtension -ext WixUtilExtension \
+          ./WiX.*/tools/candle.exe -arch "x64" -ext WixUIExtension -ext WixUtilExtension \
             -out "./lapce.wixobj" "extra/windows/wix/lapce.wxs"
-          light.exe -ext WixUIExtension -ext WixUtilExtension \
+          ./WiX.*/tools/light.exe -ext WixUIExtension -ext WixUtilExtension \
             -out "./Lapce-windows.msi" -sice:ICE61 -sice:ICE91 \
             "./lapce.wixobj"
       - name: Upload msi installer
