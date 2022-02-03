@@ -25,5 +25,5 @@ split-debuginfo = "unpacked"
 
 [profile.release]
 codegen-units = 1
-lto = "true"
+lto = "thin"
 # debug = true
