@@ -21,8 +21,8 @@ use druid::{
     theme,
     widget::{Label, LabelText},
     Application, Color, Command, Data, Env, EventCtx, ExtEventSink, FontDescriptor,
-    FontFamily, Insets, KeyEvent, Lens, LocalizedString, Menu, MenuItem, Point,
-    Rect, Size, Target, TextLayout, Vec2, WidgetId, WindowId,
+    FontFamily, Insets, KeyEvent, Lens, LocalizedString, Point, Rect, Size, Target,
+    TextLayout, Vec2, WidgetId, WindowId,
 };
 use im::{self, hashmap};
 use itertools::Itertools;
@@ -64,6 +64,7 @@ use crate::{
     find::Find,
     keypress::{KeyPressData, KeyPressFocus},
     language::{new_highlight_config, new_parser, LapceLanguage, SCOPES},
+    menu::MenuData,
     movement::{
         Cursor, CursorMode, InsertDrift, LinePosition, Movement, SelRegion,
         Selection,
@@ -143,11 +144,14 @@ pub struct LapceWindowData {
     pub plugins: Arc<Vec<PluginDescription>>,
     pub db: Arc<LapceDb>,
     pub watcher: Arc<notify::RecommendedWatcher>,
+    pub menu: Arc<MenuData>,
 }
 
 impl Data for LapceWindowData {
     fn same(&self, other: &Self) -> bool {
-        self.active == other.active && self.tabs.same(&other.tabs)
+        self.active == other.active
+            && self.tabs.same(&other.tabs)
+            && self.menu.same(&other.menu)
     }
 }
 
@@ -182,7 +186,7 @@ impl LapceWindowData {
             let tab_id = WidgetId::next();
             let tab = LapceTabData::new(
                 tab_id,
-                None,
+                LapceWorkspace::default(),
                 db.clone(),
                 keypress.clone(),
                 event_sink.clone(),
@@ -192,7 +196,14 @@ impl LapceWindowData {
             active_tab_id = tab_id;
         }
 
-        let config = Arc::new(Config::load(None).unwrap_or_default());
+        let config = Arc::new(
+            Config::load(&LapceWorkspace {
+                kind: LapceWorkspaceType::Local,
+                path: None,
+                last_open: 0,
+            })
+            .unwrap_or_default(),
+        );
         event_sink.submit_command(
             LAPCE_UI_COMMAND,
             LapceUICommand::Focus,
@@ -208,6 +219,7 @@ impl LapceWindowData {
             let path = proj_dirs.config_dir().join("keymaps.toml");
             watcher.watch(&path, notify::RecursiveMode::Recursive);
         }
+        let menu = MenuData::new();
 
         Self {
             tabs,
@@ -219,6 +231,7 @@ impl LapceWindowData {
             config,
             db,
             watcher: Arc::new(watcher),
+            menu: Arc::new(menu),
         }
     }
 }
@@ -302,7 +315,7 @@ pub enum FocusArea {
 #[derive(Clone, Lens)]
 pub struct LapceTabData {
     pub id: WidgetId,
-    pub workspace: Option<Arc<LapceWorkspace>>,
+    pub workspace: Arc<LapceWorkspace>,
     pub main_split: LapceMainSplitData,
     pub completion: Arc<CompletionData>,
     pub terminal: Arc<TerminalSplitData>,
@@ -366,23 +379,21 @@ impl GetConfig for LapceTabData {
 impl LapceTabData {
     pub fn new(
         tab_id: WidgetId,
-        workspace: Option<LapceWorkspace>,
+        workspace: LapceWorkspace,
         db: Arc<LapceDb>,
         keypress: Arc<KeyPressData>,
         event_sink: ExtEventSink,
     ) -> Self {
-        let config = Arc::new(Config::load(None).unwrap_or_default());
+        let config = Arc::new(Config::load(&workspace).unwrap_or_default());
 
-        let workspace_info = workspace
-            .as_ref()
-            .and_then(|w| db.get_workspace_info(w).ok());
+        let workspace_info = db.get_workspace_info(&workspace).ok();
 
         let (update_sender, update_receiver) = unbounded();
         let update_sender = Arc::new(update_sender);
         let (term_sender, term_receiver) = unbounded();
         let proxy = Arc::new(LapceProxy::new(
             tab_id,
-            workspace.clone().unwrap_or(LapceWorkspace::default()),
+            workspace.clone(),
             term_sender.clone(),
             event_sink.clone(),
         ));
@@ -455,7 +466,7 @@ impl LapceTabData {
         let focus = (*main_split.active).unwrap_or(*main_split.split_id);
         let mut tab = Self {
             id: tab_id,
-            workspace: workspace.map(|w| Arc::new(w)),
+            workspace: Arc::new(workspace),
             focus,
             main_split,
             completion,
@@ -769,7 +780,7 @@ impl LapceTabData {
                         let path = PathBuf::from(folder);
                         let workspace = LapceWorkspace {
                             kind: LapceWorkspaceType::Local,
-                            path,
+                            path: Some(path),
                             last_open: std::time::SystemTime::now()
                                 .duration_since(std::time::UNIX_EPOCH)
                                 .unwrap()
@@ -1036,6 +1047,14 @@ impl LapceTabData {
                     Cursor::new(CursorMode::Insert(Selection::caret(0)), None)
                 };
             }
+            LapceWorkbenchCommand::CheckoutBranch => {}
+            LapceWorkbenchCommand::ConnectSshHost => {
+                ctx.submit_command(Command::new(
+                    LAPCE_UI_COMMAND,
+                    LapceUICommand::RunPalette(Some(PaletteType::SshHost)),
+                    Target::Widget(self.palette.widget_id),
+                ));
+            }
         }
     }
 
@@ -1072,7 +1091,7 @@ impl LapceTabData {
         palette_widget_id: WidgetId,
         receiver: Receiver<(TermId, TermEvent)>,
         event_sink: ExtEventSink,
-        workspace: Option<Arc<LapceWorkspace>>,
+        workspace: Arc<LapceWorkspace>,
         proxy: Arc<LapceProxy>,
     ) {
         let mut terminals = HashMap::new();

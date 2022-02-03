@@ -36,6 +36,7 @@ use crate::{
     },
     editor::{EditorLocationNew, LapceEditorView},
     explorer::FileExplorer,
+    menu::Menu,
     movement::{self, CursorMode, Selection},
     palette::{NewPalette, PaletteViewLens},
     panel::{PanelHeaderKind, PanelPosition, PanelResizePosition},
@@ -333,9 +334,12 @@ impl Widget<LapceTabData> for LapceTabNew {
                     LapceUICommand::UpdateInstalledPlugins(plugins) => {
                         data.installed_plugins = Arc::new(plugins.to_owned());
                     }
-                    LapceUICommand::UpdateFileDiffs(diffs) => {
+                    LapceUICommand::UpdateDiffInfo(diff) => {
                         let source_control = Arc::make_mut(&mut data.source_control);
-                        source_control.file_diffs = diffs
+                        source_control.branch = diff.head.to_string();
+                        source_control.branches = diff.branches.clone();
+                        source_control.file_diffs = diff
+                            .diffs
                             .iter()
                             .map(|diff| {
                                 let mut checked = true;
@@ -698,11 +702,11 @@ impl Widget<LapceTabData> for LapceTabNew {
                     LapceUICommand::Focus => {
                         let dir = data
                             .workspace
+                            .path
                             .as_ref()
-                            .map(|w| {
-                                let dir =
-                                    w.path.file_name().unwrap().to_str().unwrap();
-                                let dir = match &w.kind {
+                            .map(|p| {
+                                let dir = p.file_name().unwrap().to_str().unwrap();
+                                let dir = match &data.workspace.kind {
                                     LapceWorkspaceType::Local => dir.to_string(),
                                     LapceWorkspaceType::RemoteSSH(user, host) => {
                                         format!("{} [{}@{}]", dir, user, host)
@@ -1371,10 +1375,11 @@ impl Widget<LapceTabData> for LapceTabHeader {
     fn paint(&mut self, ctx: &mut PaintCtx, data: &LapceTabData, env: &Env) {
         let dir = data
             .workspace
+            .path
             .as_ref()
-            .map(|w| {
-                let dir = w.path.file_name().unwrap().to_str().unwrap();
-                let dir = match &w.kind {
+            .map(|p| {
+                let dir = p.file_name().unwrap().to_str().unwrap();
+                let dir = match &data.workspace.kind {
                     LapceWorkspaceType::Local => dir.to_string(),
                     LapceWorkspaceType::RemoteSSH(user, host) => {
                         format!("{} [{}@{}]", dir, user, host)
