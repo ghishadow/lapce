@@ -61,7 +61,7 @@ const CTRL_CHARS: &'static [char] = &[
     'p', 'q', 'r', 's', 't', 'u', 'v', 'w', 'x', 'y', 'z', '[', '\\', ']', '^', '_',
 ];
 
-pub type TermConfig = alacritty_terminal::config::Config<HashMap<String, String>>;
+pub type TermConfig = alacritty_terminal::config::Config;
 
 #[derive(Clone)]
 pub struct TerminalSplitData {
