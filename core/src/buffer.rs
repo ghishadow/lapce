@@ -1,6 +1,5 @@
 use anyhow::{anyhow, Result};
 use crossbeam_channel::{unbounded, Receiver, Sender};
-use crossbeam_utils::sync::WaitGroup;
 use druid::piet::{Piet, TextLayout};
 use druid::{piet::PietTextLayout, FontWeight, Key, Vec2};
 use druid::{
@@ -8,21 +7,20 @@ use druid::{
     Color, Command, Data, EventCtx, ExtEventSink, Target, UpdateCtx, WidgetId,
     WindowId,
 };
-use druid::{Env, FontFamily, PaintCtx, Point};
-use language::{new_highlight_config, new_parser, LapceLanguage};
-use lapce_proxy::dispatch::NewBufferResponse;
+use druid::{Env, PaintCtx, Point};
+use language::{new_highlight_config, LapceLanguage};
+use lapce_proxy::dispatch::{BufferHeadResponse, NewBufferResponse};
 use lsp_types::SemanticTokensServerCapabilities;
 use lsp_types::{CallHierarchyOptions, SemanticTokensLegend};
-use lsp_types::{
-    CodeActionResponse, Position, Range, TextDocumentContentChangeEvent,
-};
-use lsp_types::{Location, SemanticTokens};
+use lsp_types::{CodeActionResponse, Position};
 use parking_lot::Mutex;
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
 use std::cell::RefCell;
-use std::cmp::Ordering;
+use std::cmp::{self, Ordering};
+use std::ops::Range;
 use std::rc::Rc;
+use std::sync::atomic::{self, AtomicU64};
 use std::{
     borrow::Cow,
     collections::BTreeSet,
@@ -38,9 +36,7 @@ use tree_sitter::{Node, Parser, Tree};
 use tree_sitter_highlight::{
     Highlight, HighlightConfiguration, HighlightEvent, Highlighter,
 };
-use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
-use xi_core_lib::selection::InsertDrift;
 use xi_rope::{
     interval::IntervalBounds,
     multiset::Subset,
@@ -54,17 +50,14 @@ use xi_unicode::EmojiExt;
 use crate::config::{Config, LapceTheme};
 use crate::editor::EditorLocationNew;
 use crate::find::FindProgress;
-use crate::theme::OldLapceTheme;
+use crate::language::SCOPES;
 use crate::{
     command::LapceUICommand,
     command::LAPCE_UI_COMMAND,
-    data::LapceEditorViewData,
-    editor::EditorOperator,
     find::Find,
     language,
     movement::{ColPosition, LinePosition, Movement, SelRegion, Selection},
     proxy::LapceProxy,
-    state::LapceWorkspaceType,
     state::{Counter, Mode},
 };
 
@@ -75,6 +68,21 @@ pub struct InvalLines {
     pub start_line: usize,
     pub inval_count: usize,
     pub new_count: usize,
+}
+
+#[derive(Clone, Debug)]
+pub enum DiffLines {
+    Left(Range<usize>),
+    Both(Range<usize>, Range<usize>),
+    Skip(Range<usize>, Range<usize>),
+    Right(Range<usize>),
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum DiffResult<T> {
+    Left(T),
+    Both(T, T),
+    Right(T),
 }
 
 #[derive(Eq, PartialEq, Hash, Copy, Clone, Debug, Serialize, Deserialize, Data)]
@@ -207,16 +215,24 @@ pub struct BufferNew {
     pub styles: Arc<Spans<Style>>,
     pub semantic_tokens: bool,
     pub language: Option<LapceLanguage>,
+    pub highlighter: Arc<Mutex<Highlighter>>,
+    pub highlight: Option<Arc<Mutex<HighlightConfiguration>>>,
     pub max_len: usize,
     pub max_len_line: usize,
     pub num_lines: usize,
     pub rev: u64,
+    pub atomic_rev: Arc<AtomicU64>,
     pub dirty: bool,
     pub loaded: bool,
     pub start_to_load: Rc<RefCell<bool>>,
     pub local: bool,
     update_sender: Arc<Sender<UpdateEvent>>,
-    pub line_changes: HashMap<usize, char>,
+    pub histories: im::HashMap<String, Rope>,
+    pub history_styles: im::HashMap<String, Arc<Spans<Style>>>,
+    pub history_line_styles: Rc<
+        RefCell<HashMap<String, HashMap<usize, Arc<Vec<(usize, usize, Style)>>>>>,
+    >,
+    pub history_changes: im::HashMap<String, Arc<Vec<DiffLines>>>,
 
     pub find: Rc<RefCell<Find>>,
     pub find_progress: Rc<RefCell<FindProgress>>,
@@ -238,12 +254,17 @@ pub struct BufferNew {
 
     pub code_actions: im::HashMap<usize, CodeActionResponse>,
     pub syntax_tree: Option<Arc<Tree>>,
+
+    tab_id: WidgetId,
+    event_sink: ExtEventSink,
 }
 
 impl BufferNew {
     pub fn new(
         content: BufferContent,
         update_sender: Arc<Sender<UpdateEvent>>,
+        tab_id: WidgetId,
+        event_sink: ExtEventSink,
     ) -> Self {
         let rope = Rope::from("");
         let language = match &content {
@@ -253,6 +274,9 @@ impl BufferNew {
         let buffer = Self {
             id: BufferId::next(),
             rope,
+            highlighter: Arc::new(Mutex::new(Highlighter::new())),
+            highlight: language
+                .map(|l| Arc::new(Mutex::new(new_highlight_config(l)))),
             language,
             content,
             styles: Arc::new(SpansBuilder::new(0).build()),
@@ -264,12 +288,16 @@ impl BufferNew {
             max_len_line: 0,
             num_lines: 0,
             rev: 0,
+            atomic_rev: Arc::new(AtomicU64::new(0)),
             start_to_load: Rc::new(RefCell::new(false)),
             loaded: false,
             dirty: false,
             update_sender,
             local: false,
-            line_changes: HashMap::new(),
+            histories: im::HashMap::new(),
+            history_styles: im::HashMap::new(),
+            history_line_styles: Rc::new(RefCell::new(HashMap::new())),
+            history_changes: im::HashMap::new(),
 
             revs: vec![Revision {
                 max_undo_so_far: 0,
@@ -294,6 +322,8 @@ impl BufferNew {
 
             code_actions: im::HashMap::new(),
             syntax_tree: None,
+            tab_id,
+            event_sink,
         };
         *buffer.line_styles.borrow_mut() = vec![None; buffer.num_lines()];
         buffer
@@ -322,6 +352,12 @@ impl BufferNew {
         self.syntax_tree = None;
     }
 
+    pub fn load_history(&mut self, version: &str, content: Rope) {
+        self.histories.insert(version.to_string(), content.clone());
+        self.trigger_history_change();
+        self.retrieve_history_styles(version, content);
+    }
+
     pub fn load_content(&mut self, content: &str) {
         self.reset_revs();
 
@@ -346,6 +382,78 @@ impl BufferNew {
         self.notify_update();
     }
 
+    fn retrieve_history_styles(&self, version: &str, content: Rope) {
+        if let BufferContent::File(path) = &self.content {
+            if let Some(highlight_config) = self.highlight.clone() {
+                let highlighter = self.highlighter.clone();
+                let id = self.id;
+                let path = path.clone();
+                let event_sink = self.event_sink.clone();
+                let tab_id = self.tab_id;
+                let version = version.to_string();
+                rayon::spawn(move || {
+                    let mut highlight_config = highlight_config.lock();
+                    let mut highlighter = highlighter.lock();
+                    let highlights = rope_styles(
+                        content,
+                        &mut highlighter,
+                        &mut highlight_config,
+                    );
+                    event_sink.submit_command(
+                        LAPCE_UI_COMMAND,
+                        LapceUICommand::UpdateHistoryStyle {
+                            id,
+                            path,
+                            history: version,
+                            highlights,
+                        },
+                        Target::Widget(tab_id),
+                    );
+                });
+            }
+        }
+    }
+
+    fn trigger_history_change(&self) {
+        if let BufferContent::File(path) = &self.content {
+            if let Some(head) = self.histories.get("head") {
+                let id = self.id;
+                let rev = self.rev;
+                let atomic_rev = self.atomic_rev.clone();
+                let path = path.clone();
+                let left_rope = head.clone();
+                let right_rope = self.rope.clone();
+                let event_sink = self.event_sink.clone();
+                let tab_id = self.tab_id;
+                rayon::spawn(move || {
+                    if atomic_rev.load(atomic::Ordering::Acquire) != rev {
+                        return;
+                    }
+                    let changes =
+                        rope_diff(left_rope, right_rope, rev, atomic_rev.clone());
+                    if changes.is_none() {
+                        return;
+                    }
+                    let changes = changes.unwrap();
+                    if atomic_rev.load(atomic::Ordering::Acquire) != rev {
+                        return;
+                    }
+                    event_sink.submit_command(
+                        LAPCE_UI_COMMAND,
+                        LapceUICommand::UpdateHisotryChanges {
+                            id: id,
+                            path,
+                            rev,
+                            history: "head".to_string(),
+                            changes: Arc::new(changes),
+                        },
+                        Target::Widget(tab_id),
+                    );
+                });
+            }
+        }
+    }
+
     pub fn notify_update(&self) {
         if let Some(language) = self.language {
             if let BufferContent::File(path) = &self.content {
@@ -360,7 +468,45 @@ impl BufferNew {
                 }));
             }
         }
+        self.trigger_history_change();
     }
+
+    pub fn retrieve_file_head(
+        &self,
+        tab_id: WidgetId,
+        proxy: Arc<LapceProxy>,
+        event_sink: ExtEventSink,
+    ) {
+        let id = self.id;
+        if let BufferContent::File(path) = &self.content {
+            let path = path.clone();
+            thread::spawn(move || {
+                proxy.get_buffer_head(
+                    id,
+                    path.clone(),
+                    Box::new(move |result| {
+                        if let Ok(res) = result {
+                            if let Ok(resp) =
+                                serde_json::from_value::<BufferHeadResponse>(res)
+                            {
+                                event_sink.submit_command(
+                                    LAPCE_UI_COMMAND,
+                                    LapceUICommand::LoadBufferHead {
+                                        path,
+                                        content: Rope::from(resp.content),
+                                        id: resp.id,
+                                    },
+                                    Target::Widget(tab_id),
+                                );
+                            }
+                        }
+                    }),
+                )
+            });
+        }
+    }
+
+    pub fn retrieve_file_history(&self) {}
 
     pub fn retrieve_file(
         &self,
@@ -376,6 +522,8 @@ impl BufferNew {
         let id = self.id;
         if let BufferContent::File(path) = &self.content {
             let path = path.clone();
+            let proxy = proxy.clone();
+            let event_sink = event_sink.clone();
             thread::spawn(move || {
                 proxy.new_buffer(
                     id,
@@ -400,6 +548,8 @@ impl BufferNew {
                 )
             });
         }
+
+        self.retrieve_file_head(tab_id, proxy, event_sink);
     }
 
     pub fn reset_find(&self, current_find: &Find) {
@@ -604,6 +754,49 @@ impl BufferNew {
         self.rope.len()
     }
 
+    fn get_hisotry_line_styles(
+        &self,
+        history: &str,
+        line: usize,
+    ) -> Option<Arc<Vec<(usize, usize, Style)>>> {
+        let rope = self.histories.get(history)?;
+        let styles = self.history_styles.get(history)?;
+        let mut cached_line_styles = self.history_line_styles.borrow_mut();
+        let cached_line_styles = cached_line_styles.get_mut(history)?;
+        if let Some(line_styles) = cached_line_styles.get(&line) {
+            return Some(line_styles.clone());
+        }
+
+        let start_offset = rope.offset_of_line(line);
+        let end_offset = rope.offset_of_line(line + 1);
+
+        let line_styles: Vec<(usize, usize, Style)> = styles
+            .iter_chunks(start_offset..end_offset)
+            .filter_map(|(iv, style)| {
+                let start = iv.start();
+                let end = iv.end();
+                if start > end_offset {
+                    None
+                } else if end < start_offset {
+                    None
+                } else {
+                    Some((
+                        if start > start_offset {
+                            start - start_offset
+                        } else {
+                            0
+                        },
+                        end - start_offset,
+                        style.clone(),
+                    ))
+                }
+            })
+            .collect();
+        let line_styles = Arc::new(line_styles);
+        cached_line_styles.insert(line, line_styles.clone());
+        Some(line_styles)
+    }
+
     fn get_line_styles(&self, line: usize) -> Arc<Vec<(usize, usize, Style)>> {
         if let Some(line_styles) = self.line_styles.borrow()[line].as_ref() {
             return line_styles.clone();
@@ -636,6 +829,47 @@ impl BufferNew {
         let line_styles = Arc::new(line_styles);
         self.line_styles.borrow_mut()[line] = Some(line_styles.clone());
         line_styles
+    }
+
+    pub fn history_text_layout(
+        &self,
+        ctx: &mut PaintCtx,
+        history: &str,
+        line: usize,
+        cursor_index: Option<usize>,
+        bounds: [f64; 2],
+        config: &Config,
+    ) -> Option<PietTextLayout> {
+        let rope = self.histories.get(history)?;
+        let start_offset = rope.offset_of_line(line);
+        let end_offset = rope.offset_of_line(line + 1);
+        let line_content = rope.slice_to_cow(start_offset..end_offset).to_string();
+
+        let mut layout_builder = ctx
+            .text()
+            .new_text_layout(line_content)
+            .font(config.editor.font_family(), config.editor.font_size as f64)
+            .text_color(
+                config
+                    .get_color_unchecked(LapceTheme::EDITOR_FOREGROUND)
+                    .clone(),
+            );
+
+        if let Some(styles) = self.get_hisotry_line_styles(history, line) {
+            for (start, end, style) in styles.iter() {
+                if let Some(fg_color) = style.fg_color.as_ref() {
+                    if let Some(fg_color) =
+                        config.get_color(&("style.".to_string() + fg_color))
+                    {
+                        layout_builder = layout_builder.range_attribute(
+                            start..end,
+                            TextAttribute::TextColor(fg_color.clone()),
+                        );
+                    }
+                }
+            }
+        }
+        Some(layout_builder.build_with_bounds(bounds))
     }
 
     pub fn new_text_layout(
@@ -714,9 +948,17 @@ impl BufferNew {
         pos: Point,
         mode: Mode,
         config: &Config,
+        compare: Option<String>,
     ) -> usize {
         let line_height = config.editor.line_height as f64;
         let line = (pos.y / line_height).floor() as usize;
+
+        let line = if let Some(compare) = compare.as_ref() {
+            self.diff_actual_line_from_visual(compare, line)
+        } else {
+            line
+        };
+
         let last_line = self.last_line();
         let (line, col) = if line > last_line {
             (last_line, 0)
@@ -848,10 +1090,18 @@ impl BufferNew {
         movement: &Movement,
         mode: Mode,
         modify: bool,
+        compare: Option<String>,
     ) -> Selection {
         let mut new_selection = Selection::new();
         for region in selection.regions() {
-            let region = self.update_region(region, count, movement, mode, modify);
+            let region = self.update_region(
+                region,
+                count,
+                movement,
+                mode,
+                modify,
+                compare.clone(),
+            );
             new_selection.add_region(region);
         }
         new_selection
@@ -864,9 +1114,16 @@ impl BufferNew {
         movement: &Movement,
         mode: Mode,
         modify: bool,
+        compare: Option<String>,
     ) -> SelRegion {
-        let (end, horiz) =
-            self.move_offset(region.end(), region.horiz(), count, movement, mode);
+        let (end, horiz) = self.move_offset(
+            region.end(),
+            region.horiz(),
+            count,
+            movement,
+            mode,
+            compare,
+        );
 
         let start = match modify {
             true => region.start(),
@@ -925,6 +1182,143 @@ impl BufferNew {
         new_offset
     }
 
+    pub fn diff_visual_line(&self, compare: &str, line: usize) -> usize {
+        let mut visual_line = 0;
+        if let Some(changes) = self.history_changes.get(compare) {
+            for (i, change) in changes.iter().enumerate() {
+                match change {
+                    DiffLines::Left(range) => {
+                        visual_line += range.len();
+                    }
+                    DiffLines::Both(_, r) | DiffLines::Right(r) => {
+                        if r.contains(&line) {
+                            visual_line += line - r.start;
+                            break;
+                        }
+                        visual_line += r.len();
+                    }
+                    DiffLines::Skip(_, r) => {
+                        if r.contains(&line) {
+                            break;
+                        }
+                        visual_line += 1;
+                    }
+                }
+            }
+        }
+        visual_line
+    }
+
+    pub fn diff_actual_line_from_visual(
+        &self,
+        compare: &str,
+        visual_line: usize,
+    ) -> usize {
+        let mut current_visual_line = 0;
+        let mut line = 0;
+        if let Some(changes) = self.history_changes.get(compare) {
+            for (i, change) in changes.iter().enumerate() {
+                match change {
+                    DiffLines::Left(range) => {
+                        current_visual_line += range.len();
+                        if current_visual_line > visual_line {
+                            if let Some(change) = changes.get(i + 1) {
+                                match change {
+                                    DiffLines::Left(_) => {}
+                                    DiffLines::Both(_, r)
+                                    | DiffLines::Skip(_, r)
+                                    | DiffLines::Right(r) => {
+                                        line = r.start;
+                                    }
+                                }
+                            } else if i > 0 {
+                                if let Some(change) = changes.get(i - 1) {
+                                    match change {
+                                        DiffLines::Left(_) => {}
+                                        DiffLines::Both(_, r)
+                                        | DiffLines::Skip(_, r)
+                                        | DiffLines::Right(r) => {
+                                            line = r.end - 1;
+                                        }
+                                    }
+                                }
+                            }
+                            break;
+                        }
+                    }
+                    DiffLines::Skip(_, r) => {
+                        current_visual_line += 1;
+                        if current_visual_line > visual_line {
+                            line = r.end;
+                            break;
+                        }
+                    }
+                    DiffLines::Both(_, r) | DiffLines::Right(r) => {
+                        current_visual_line += r.len();
+                        if current_visual_line > visual_line {
+                            line = r.end - (current_visual_line - visual_line);
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+        if current_visual_line <= visual_line {
+            self.last_line()
+        } else {
+            line
+        }
+    }
+
+    fn diff_cursor_line(&self, compare: &str, line: usize) -> usize {
+        let mut cursor_line = 0;
+        if let Some(changes) = self.history_changes.get(compare) {
+            for (i, change) in changes.iter().enumerate() {
+                match change {
+                    DiffLines::Left(range) => {}
+                    DiffLines::Both(_, r) | DiffLines::Right(r) => {
+                        if r.contains(&line) {
+                            cursor_line += line - r.start;
+                            break;
+                        }
+                        cursor_line += r.len();
+                    }
+                    DiffLines::Skip(_, r) => {
+                        if r.contains(&line) {
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+        cursor_line
+    }
+
+    fn diff_actual_line(&self, compare: &str, cursor_line: usize) -> usize {
+        let mut current_cursor_line = 0;
+        let mut line = 0;
+        if let Some(changes) = self.history_changes.get(compare) {
+            for (i, change) in changes.iter().enumerate() {
+                match change {
+                    DiffLines::Left(range) => {}
+                    DiffLines::Skip(_, r) => {}
+                    DiffLines::Both(_, r) | DiffLines::Right(r) => {
+                        current_cursor_line += r.len();
+                        if current_cursor_line > cursor_line {
+                            line = r.end - (current_cursor_line - cursor_line);
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+        if current_cursor_line <= cursor_line {
+            self.last_line()
+        } else {
+            line
+        }
+    }
+
     pub fn move_offset(
         &self,
         offset: usize,
@@ -932,6 +1326,7 @@ impl BufferNew {
         count: usize,
         movement: &Movement,
         mode: Mode,
+        compare: Option<String>,
     ) -> (usize, ColPosition) {
         let horiz = if let Some(horiz) = horiz {
             horiz.clone()
@@ -972,15 +1367,41 @@ impl BufferNew {
             }
             Movement::Up => {
                 let line = self.line_of_offset(offset);
-                let line = if line > count { line - count } else { 0 };
+                let line = if let Some(compare) = compare.as_ref() {
+                    let cursor_line = self.diff_cursor_line(compare, line);
+                    let cursor_line = if cursor_line > count {
+                        cursor_line - count
+                    } else {
+                        0
+                    };
+                    self.diff_actual_line(compare, cursor_line)
+                } else {
+                    if line > count {
+                        line - count
+                    } else {
+                        0
+                    }
+                };
+
                 let col = self.line_horiz_col(line, &horiz, mode != Mode::Normal);
                 let new_offset = self.offset_of_line_col(line, col);
                 (new_offset, horiz)
             }
             Movement::Down => {
                 let last_line = self.last_line();
-                let line = self.line_of_offset(offset) + count;
-                let line = if line > last_line { last_line } else { line };
+                let line = self.line_of_offset(offset);
+
+                let line = if let Some(compare) = compare.as_ref() {
+                    let cursor_line = self.diff_cursor_line(compare, line);
+                    let cursor_line = cursor_line + count;
+                    let line = self.diff_actual_line(compare, cursor_line);
+                    line
+                } else {
+                    let line = line + count;
+                    let line = if line > last_line { last_line } else { line };
+                    line
+                };
+
                 let col = self.line_horiz_col(line, &horiz, mode != Mode::Normal);
                 let new_offset = self.offset_of_line_col(line, col);
                 (new_offset, horiz)
@@ -1205,6 +1626,18 @@ impl BufferNew {
         self.syntax_tree = Some(Arc::new(tree));
     }
 
+    pub fn update_history_changes(
+        &mut self,
+        rev: u64,
+        history: &str,
+        changes: Arc<Vec<DiffLines>>,
+    ) {
+        if rev != self.rev {
+            return;
+        }
+        self.history_changes.insert(history.to_string(), changes);
+    }
+
     pub fn update_styles(
         &mut self,
         rev: u64,
@@ -1346,6 +1779,7 @@ impl BufferNew {
             return;
         }
         self.rev += 1;
+        self.atomic_rev.store(self.rev, atomic::Ordering::Release);
         self.dirty = true;
 
         let (iv, newlen) = delta.summary();
@@ -2269,6 +2703,401 @@ pub fn str_col(s: &str) -> usize {
     total_width
 }
 
+fn rope_styles(
+    rope: Rope,
+    highlighter: &mut Highlighter,
+    highlight_config: &mut HighlightConfiguration,
+) -> Spans<Style> {
+    let mut current_hl: Option<Highlight> = None;
+    let mut highlights = SpansBuilder::new(rope.len());
+    for hightlight in highlighter
+        .highlight(
+            highlight_config,
+            rope.slice_to_cow(0..rope.len()).as_bytes(),
+            None,
+            |_| None,
+        )
+        .unwrap()
+    {
+        if let Ok(highlight) = hightlight {
+            match highlight {
+                HighlightEvent::Source { start, end } => {
+                    if let Some(hl) = current_hl {
+                        if let Some(hl) = SCOPES.get(hl.0) {
+                            highlights.add_span(
+                                Interval::new(start, end),
+                                Style {
+                                    fg_color: Some(hl.to_string()),
+                                },
+                            );
+                        }
+                    }
+                }
+                HighlightEvent::HighlightStart(hl) => {
+                    current_hl = Some(hl);
+                }
+                HighlightEvent::HighlightEnd => current_hl = None,
+            }
+        }
+    }
+    let highlights = highlights.build();
+    highlights
+}
+
+fn buffer_diff(
+    left_rope: Rope,
+    right_rope: Rope,
+    rev: u64,
+    atomic_rev: Arc<AtomicU64>,
+) -> Option<Vec<DiffLines>> {
+    let mut changes = Vec::new();
+    let left_str = &left_rope.slice_to_cow(0..left_rope.len());
+    let right_str = &right_rope.slice_to_cow(0..right_rope.len());
+    let mut left_line = 0;
+    let mut right_line = 0;
+    for diff in diff::lines(left_str, right_str) {
+        if atomic_rev.load(atomic::Ordering::Acquire) != rev {
+            return None;
+        }
+        match diff {
+            diff::Result::Left(_) => {
+                match changes.last_mut() {
+                    Some(DiffLines::Left(r)) => r.end = left_line + 1,
+                    _ => changes.push(DiffLines::Left(left_line..left_line + 1)),
+                }
+                left_line += 1;
+            }
+            diff::Result::Both(_, _) => {
+                match changes.last_mut() {
+                    Some(DiffLines::Both(l, r)) => {
+                        l.end = left_line + 1;
+                        r.end = right_line + 1;
+                    }
+                    _ => changes.push(DiffLines::Both(
+                        left_line..left_line + 1,
+                        right_line..right_line + 1,
+                    )),
+                }
+                left_line += 1;
+                right_line += 1;
+            }
+            diff::Result::Right(_) => {
+                match changes.last_mut() {
+                    Some(DiffLines::Right(r)) => r.end = right_line + 1,
+                    _ => changes.push(DiffLines::Right(right_line..right_line + 1)),
+                }
+                right_line += 1;
+            }
+        }
+    }
+    for (i, change) in changes.clone().iter().enumerate().rev() {
+        match change {
+            DiffLines::Both(l, r) => {
+                if r.len() > 6 {
+                    changes[i] = DiffLines::Both(l.end - 3..l.end, r.end - 3..r.end);
+                    changes.insert(
+                        i,
+                        DiffLines::Skip(
+                            l.start + 3..l.end - 3,
+                            r.start + 3..r.end - 3,
+                        ),
+                    );
+                    changes.insert(
+                        i,
+                        DiffLines::Both(l.start..l.start + 3, r.start..r.start + 3),
+                    );
+                }
+            }
+            _ => (),
+        }
+    }
+    Some(changes)
+}
+
+fn rope_diff(
+    left_rope: Rope,
+    right_rope: Rope,
+    rev: u64,
+    atomic_rev: Arc<AtomicU64>,
+) -> Option<Vec<DiffLines>> {
+    let left_lines = left_rope.lines(..).collect::<Vec<Cow<str>>>();
+    let right_lines = right_rope.lines(..).collect::<Vec<Cow<str>>>();
+
+    let left_count = left_lines.len();
+    let right_count = right_lines.len();
+    let min_count = cmp::min(left_count, right_count);
+
+    let leading_equals = left_lines
+        .iter()
+        .zip(right_lines.iter())
+        .take_while(|p| p.0 == p.1)
+        .count();
+    let trailing_equals = left_lines
+        .iter()
+        .rev()
+        .zip(right_lines.iter().rev())
+        .take(min_count - leading_equals)
+        .take_while(|p| p.0 == p.1)
+        .count();
+
+    let left_diff_size = left_count - leading_equals - trailing_equals;
+    let right_diff_size = right_count - leading_equals - trailing_equals;
+
+    let table: Vec<Vec<u32>> = {
+        let mut table = vec![vec![0; right_diff_size + 1]; left_diff_size + 1];
+        let left_skip = left_lines.iter().skip(leading_equals).take(left_diff_size);
+        let right_skip = right_lines
+            .iter()
+            .skip(leading_equals)
+            .take(right_diff_size);
+
+        for (i, l) in left_skip.enumerate() {
+            for (j, r) in right_skip.clone().enumerate() {
+                if atomic_rev.load(atomic::Ordering::Acquire) != rev {
+                    return None;
+                }
+                table[i + 1][j + 1] = if l == r {
+                    table[i][j] + 1
+                } else {
+                    std::cmp::max(table[i][j + 1], table[i + 1][j])
+                };
+            }
+        }
+
+        table
+    };
+
+    let diff = {
+        let mut diff = Vec::with_capacity(left_diff_size + right_diff_size);
+        let mut i = left_diff_size;
+        let mut j = right_diff_size;
+        let mut li = left_lines.iter().rev().skip(trailing_equals);
+        let mut ri = right_lines.iter().skip(trailing_equals);
+
+        loop {
+            if atomic_rev.load(atomic::Ordering::Acquire) != rev {
+                return None;
+            }
+            if j > 0 && (i == 0 || table[i][j] == table[i][j - 1]) {
+                j -= 1;
+                diff.push(DiffResult::Right(ri.next().unwrap()));
+            } else if i > 0 && (j == 0 || table[i][j] == table[i - 1][j]) {
+                i -= 1;
+                diff.push(DiffResult::Left(li.next().unwrap()));
+            } else if i > 0 && j > 0 {
+                i -= 1;
+                j -= 1;
+                diff.push(DiffResult::Both(li.next().unwrap(), ri.next().unwrap()));
+            } else {
+                break;
+            }
+        }
+
+        diff
+    };
+
+    let mut changes = Vec::new();
+    let mut left_line = 0;
+    let mut right_line = 0;
+    if leading_equals > 0 {
+        changes.push(DiffLines::Both(0..leading_equals, 0..leading_equals));
+    }
+    left_line += leading_equals;
+    right_line += leading_equals;
+
+    for diff in diff.iter().rev() {
+        if atomic_rev.load(atomic::Ordering::Acquire) != rev {
+            return None;
+        }
+        match diff {
+            DiffResult::Left(_) => {
+                match changes.last_mut() {
+                    Some(DiffLines::Left(r)) => r.end = left_line + 1,
+                    _ => changes.push(DiffLines::Left(left_line..left_line + 1)),
+                }
+                left_line += 1;
+            }
+            DiffResult::Both(_, _) => {
+                match changes.last_mut() {
+                    Some(DiffLines::Both(l, r)) => {
+                        l.end = left_line + 1;
+                        r.end = right_line + 1;
+                    }
+                    _ => changes.push(DiffLines::Both(
+                        left_line..left_line + 1,
+                        right_line..right_line + 1,
+                    )),
+                }
+                left_line += 1;
+                right_line += 1;
+            }
+            DiffResult::Right(_) => {
+                match changes.last_mut() {
+                    Some(DiffLines::Right(r)) => r.end = right_line + 1,
+                    _ => changes.push(DiffLines::Right(right_line..right_line + 1)),
+                }
+                right_line += 1;
+            }
+        }
+    }
+
+    if trailing_equals > 0 {
+        changes.push(DiffLines::Both(
+            left_count - trailing_equals..left_count,
+            right_count - trailing_equals..right_count,
+        ));
+    }
+    if changes.len() > 0 {
+        let changes_last = changes.len() - 1;
+        for (i, change) in changes.clone().iter().enumerate().rev() {
+            if atomic_rev.load(atomic::Ordering::Acquire) != rev {
+                return None;
+            }
+            match change {
+                DiffLines::Both(l, r) => {
+                    if i == 0 || i == changes_last {
+                        if r.len() > 3 {
+                            if i == 0 {
+                                changes[i] = DiffLines::Both(
+                                    l.end - 3..l.end,
+                                    r.end - 3..r.end,
+                                );
+                                changes.insert(
+                                    i,
+                                    DiffLines::Skip(
+                                        l.start..l.end - 3,
+                                        r.start..r.end - 3,
+                                    ),
+                                );
+                            } else {
+                                changes[i] = DiffLines::Skip(
+                                    l.start + 3..l.end,
+                                    r.start + 3..r.end,
+                                );
+                                changes.insert(
+                                    i,
+                                    DiffLines::Both(
+                                        l.start..l.start + 3,
+                                        r.start..r.start + 3,
+                                    ),
+                                );
+                            }
+                        }
+                    } else {
+                        if r.len() > 6 {
+                            changes[i] =
+                                DiffLines::Both(l.end - 3..l.end, r.end - 3..r.end);
+                            changes.insert(
+                                i,
+                                DiffLines::Skip(
+                                    l.start + 3..l.end - 3,
+                                    r.start + 3..r.end - 3,
+                                ),
+                            );
+                            changes.insert(
+                                i,
+                                DiffLines::Both(
+                                    l.start..l.start + 3,
+                                    r.start..r.start + 3,
+                                ),
+                            );
+                        }
+                    }
+                }
+                _ => (),
+            }
+        }
+    }
+    Some(changes)
+}
+
+fn iter_diff<I, T>(left: I, right: I) -> Vec<DiffResult<T>>
+where
+    I: Clone + Iterator<Item = T> + DoubleEndedIterator,
+    T: PartialEq,
+{
+    let left_count = left.clone().count();
+    let right_count = right.clone().count();
+    let min_count = cmp::min(left_count, right_count);
+
+    let leading_equals = left
+        .clone()
+        .zip(right.clone())
+        .take_while(|p| p.0 == p.1)
+        .count();
+    let trailing_equals = left
+        .clone()
+        .rev()
+        .zip(right.clone().rev())
+        .take(min_count - leading_equals)
+        .take_while(|p| p.0 == p.1)
+        .count();
+
+    let left_diff_size = left_count - leading_equals - trailing_equals;
+    let right_diff_size = right_count - leading_equals - trailing_equals;
+
+    let table: Vec<Vec<u32>> = {
+        let mut table = vec![vec![0; right_diff_size + 1]; left_diff_size + 1];
+        let left_skip = left.clone().skip(leading_equals).take(left_diff_size);
+        let right_skip = right.clone().skip(leading_equals).take(right_diff_size);
+
+        for (i, l) in left_skip.clone().enumerate() {
+            for (j, r) in right_skip.clone().enumerate() {
+                table[i + 1][j + 1] = if l == r {
+                    table[i][j] + 1
+                } else {
+                    std::cmp::max(table[i][j + 1], table[i + 1][j])
+                };
+            }
+        }
+
+        table
+    };
+
+    let diff = {
+        let mut diff = Vec::with_capacity(left_diff_size + right_diff_size);
+        let mut i = left_diff_size;
+        let mut j = right_diff_size;
+        let mut li = left.clone().rev().skip(trailing_equals);
+        let mut ri = right.clone().rev().skip(trailing_equals);
+
+        loop {
+            if j > 0 && (i == 0 || table[i][j] == table[i][j - 1]) {
+                j -= 1;
+                diff.push(DiffResult::Right(ri.next().unwrap()));
+            } else if i > 0 && (j == 0 || table[i][j] == table[i - 1][j]) {
+                i -= 1;
+                diff.push(DiffResult::Left(li.next().unwrap()));
+            } else if i > 0 && j > 0 {
+                i -= 1;
+                j -= 1;
+                diff.push(DiffResult::Both(li.next().unwrap(), ri.next().unwrap()));
+            } else {
+                break;
+            }
+        }
+
+        diff
+    };
+
+    let diff_size = leading_equals + diff.len() + trailing_equals;
+    let mut total_diff = Vec::with_capacity(diff_size);
+
+    total_diff.extend(
+        left.clone()
+            .zip(right.clone())
+            .take(leading_equals)
+            .map(|(l, r)| DiffResult::Both(l, r)),
+    );
+    total_diff.extend(diff.into_iter().rev());
+    total_diff.extend(
+        left.skip(leading_equals + left_diff_size)
+            .zip(right.skip(leading_equals + right_diff_size))
+            .map(|(l, r)| DiffResult::Both(l, r)),
+    );
+
+    total_diff
+}
 // pub fn grapheme_column_width(s: &str) -> usize {
 //     // Due to this issue:
 //     // https://github.com/unicode-rs/unicode-width/issues/4

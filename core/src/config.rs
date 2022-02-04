@@ -4,12 +4,13 @@ use anyhow::Result;
 use directories::ProjectDirs;
 use druid::{
     piet::{PietText, Text, TextLayout, TextLayoutBuilder},
-    theme, Color, Env, FontDescriptor, FontFamily, Key, Size,
+    theme, Color, Env, ExtEventSink, FontDescriptor, FontFamily, Key, Size, Target,
 };
 use hashbrown::HashMap;
 use serde::{Deserialize, Deserializer, Serialize};
 
 use crate::{
+    command::{LapceUICommand, LAPCE_UI_COMMAND},
     data::hex_to_color,
     state::{LapceWorkspace, LapceWorkspaceType},
 };
@@ -39,6 +40,10 @@ impl LapceTheme {
     pub const EDITOR_CARET: &'static str = "editor.caret";
     pub const EDITOR_SELECTION: &'static str = "editor.selection";
     pub const EDITOR_CURRENT_LINE: &'static str = "editor.current_line";
+
+    pub const SOURCE_CONTROL_ADDED: &'static str = "source_control.added";
+    pub const SOURCE_CONTROL_REMOVED: &'static str = "source_control.removed";
+    pub const SOURCE_CONTROL_MODIFIED: &'static str = "source_control.modified";
 
     pub const TERMINAL_CURSOR: &'static str = "terminal.cursor";
     pub const TERMINAL_BACKGROUND: &'static str = "terminal.background";
@@ -109,8 +114,37 @@ pub struct Config {
     pub themes: HashMap<String, HashMap<String, Color>>,
 }
 
+pub struct ConfigWatcher {
+    event_sink: ExtEventSink,
+}
+
+impl ConfigWatcher {
+    pub fn new(event_sink: ExtEventSink) -> Self {
+        Self { event_sink }
+    }
+}
+
+impl notify::EventHandler for ConfigWatcher {
+    fn handle_event(&mut self, event: notify::Result<notify::Event>) {
+        if let Ok(event) = event {
+            match event.kind {
+                notify::EventKind::Create(_)
+                | notify::EventKind::Modify(_)
+                | notify::EventKind::Remove(_) => {
+                    self.event_sink.submit_command(
+                        LAPCE_UI_COMMAND,
+                        LapceUICommand::ReloadConfig,
+                        Target::Auto,
+                    );
+                }
+                _ => (),
+            }
+        }
+    }
+}
+
 impl Config {
-    pub fn load(workspace: Option<LapceWorkspace>) -> Result<Self> {
+    pub fn load(workspace: &LapceWorkspace) -> Result<Self> {
         let mut settings = config::Config::default().with_merged(
             config::File::from_str(default_settings, config::FileFormat::Toml),
         )?;
@@ -120,15 +154,15 @@ impl Config {
             settings.merge(config::File::from(path.as_path()).required(false));
         }
 
-        if let Some(workspace) = workspace {
-            match workspace.kind {
-                crate::state::LapceWorkspaceType::Local => {
-                    let path = workspace.path.join("./.lapce/settings.toml");
+        match workspace.kind {
+            crate::state::LapceWorkspaceType::Local => {
+                if let Some(path) = workspace.path.as_ref() {
+                    let path = path.join("./.lapce/settings.toml");
                     settings
                         .merge(config::File::from(path.as_path()).required(false));
                 }
-                crate::state::LapceWorkspaceType::RemoteSSH(_, _) => {}
             }
+            crate::state::LapceWorkspaceType::RemoteSSH(_, _) => {}
         }
 
         let mut config: Config = settings.try_into()?;
@@ -277,25 +311,27 @@ impl Config {
         let path = Self::recent_workspaces_file()?;
         let mut array = toml::value::Array::new();
         for workspace in workspaces {
-            let mut table = toml::value::Table::new();
-            table.insert(
-                "kind".to_string(),
-                toml::Value::String(match workspace.kind {
-                    LapceWorkspaceType::Local => "local".to_string(),
-                    LapceWorkspaceType::RemoteSSH(user, host) => {
-                        format!("ssh://{}@{}", user, host)
-                    }
-                }),
-            );
-            table.insert(
-                "path".to_string(),
-                toml::Value::String(workspace.path.to_str()?.to_string()),
-            );
-            table.insert(
-                "last_open".to_string(),
-                toml::Value::Integer(workspace.last_open as i64),
-            );
-            array.push(toml::Value::Table(table));
+            if let Some(path) = workspace.path.as_ref() {
+                let mut table = toml::value::Table::new();
+                table.insert(
+                    "kind".to_string(),
+                    toml::Value::String(match workspace.kind {
+                        LapceWorkspaceType::Local => "local".to_string(),
+                        LapceWorkspaceType::RemoteSSH(user, host) => {
+                            format!("ssh://{}@{}", user, host)
+                        }
+                    }),
+                );
+                table.insert(
+                    "path".to_string(),
+                    toml::Value::String(path.to_str()?.to_string()),
+                );
+                table.insert(
+                    "last_open".to_string(),
+                    toml::Value::Integer(workspace.last_open as i64),
+                );
+                array.push(toml::Value::Table(table));
+            }
         }
         let mut table = toml::value::Table::new();
         table.insert("workspaces".to_string(), toml::Value::Array(array));
@@ -337,7 +373,7 @@ impl Config {
                         .unwrap_or(0) as u64;
                     let workspace = LapceWorkspace {
                         kind,
-                        path,
+                        path: Some(path),
                         last_open,
                     };
                     Some(workspace)

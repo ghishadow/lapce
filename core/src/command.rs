@@ -5,7 +5,9 @@ use anyhow::Result;
 use druid::{Point, Rect, Selector, Size, WidgetId};
 use indexmap::IndexMap;
 use lapce_proxy::{
-    dispatch::FileNodeItem, plugin::PluginDescription, terminal::TermId,
+    dispatch::{DiffInfo, FileDiff, FileNodeItem},
+    plugin::PluginDescription,
+    terminal::TermId,
 };
 use lsp_types::{
     CodeActionResponse, CompletionItem, CompletionResponse, Location, Position,
@@ -16,12 +18,13 @@ use strum::{self, EnumMessage, IntoEnumIterator};
 use strum_macros::{Display, EnumIter, EnumMessage, EnumProperty, EnumString};
 use tree_sitter::Tree;
 use tree_sitter_highlight::Highlight;
-use xi_rope::spans::Spans;
+use xi_rope::{spans::Spans, Rope};
 
 use crate::{
     buffer::BufferId,
-    buffer::{InvalLines, Style},
+    buffer::{DiffLines, InvalLines, Style},
     editor::{EditorLocation, EditorLocationNew, HighlightTextLayout},
+    menu::MenuItem,
     movement::{LinePosition, Movement},
     palette::{NewPaletteItem, PaletteType},
     split::SplitMoveDirection,
@@ -131,6 +134,10 @@ pub enum LapceWorkbenchCommand {
     #[strum(message = "Reload Window")]
     ReloadWindow,
 
+    #[strum(serialize = "connect_ssh_host")]
+    #[strum(message = "Connect to SSH Host")]
+    ConnectSshHost,
+
     #[strum(serialize = "palette.line")]
     PaletteLine,
 
@@ -143,8 +150,12 @@ pub enum LapceWorkbenchCommand {
     #[strum(serialize = "palette.command")]
     PaletteCommand,
 
+    #[strum(message = "Open Recent Workspace")]
     #[strum(serialize = "palette.workspace")]
     PaletteWorkspace,
+
+    #[strum(serialize = "source_control.checkout_branch")]
+    CheckoutBranch,
 
     #[strum(serialize = "toggle_maximized_panel")]
     ToggleMaximizedPanel,
@@ -181,6 +192,9 @@ pub enum LapceWorkbenchCommand {
 
     #[strum(serialize = "focus_terminal")]
     FocusTerminal,
+
+    #[strum(serialize = "source_control_commit")]
+    SourceControlCommit,
 }
 
 #[derive(Display, EnumString, EnumIter, Clone, PartialEq, Debug, EnumMessage)]
@@ -315,8 +329,11 @@ pub enum LapceCommand {
     Redo,
     #[strum(serialize = "center_of_window")]
     CenterOfWindow,
+
+    #[strum(message = "Go to Definition")]
     #[strum(serialize = "goto_definition")]
     GotoDefinition,
+
     #[strum(serialize = "jump_location_backward")]
     JumpLocationBackward,
     #[strum(serialize = "jump_location_forward")]
@@ -325,6 +342,10 @@ pub enum LapceCommand {
     NextError,
     #[strum(serialize = "previous_error")]
     PreviousError,
+    #[strum(serialize = "next_diff")]
+    NextDiff,
+    #[strum(serialize = "previous_diff")]
+    PreviousDiff,
     #[strum(serialize = "format_document")]
     #[strum(message = "Format Document")]
     FormatDocument,
@@ -411,15 +432,28 @@ pub enum LapceUICommand {
         content: String,
         locations: Vec<(WidgetId, EditorLocationNew)>,
     },
+    LoadBufferHead {
+        path: PathBuf,
+        id: String,
+        content: Rope,
+    },
     LoadBufferAndGoToPosition {
         path: PathBuf,
         content: String,
         editor_view_id: WidgetId,
         location: EditorLocationNew,
     },
+    HideMenu,
+    ShowMenu(Point, Arc<Vec<MenuItem>>),
+    UpdateSearch(String),
+    GlobalSearchResult(
+        String,
+        Arc<HashMap<PathBuf, Vec<(usize, (usize, usize), String)>>>,
+    ),
     SetWorkspace(LapceWorkspace),
     SetTheme(String, bool),
     OpenFile(PathBuf),
+    OpenFileDiff(PathBuf, String),
     CancelCompletion(usize),
     ResolveCompletion(BufferId, u64, usize, CompletionItem),
     UpdateCompletion(usize, String, CompletionResponse),
@@ -468,18 +502,30 @@ pub enum LapceUICommand {
         highlights: Spans<Style>,
         semantic_tokens: bool,
     },
+    UpdateHistoryStyle {
+        id: BufferId,
+        path: PathBuf,
+        history: String,
+        highlights: Spans<Style>,
+    },
     UpdateSyntaxTree {
         id: BufferId,
         path: PathBuf,
         rev: u64,
         tree: Tree,
     },
+    UpdateHisotryChanges {
+        id: BufferId,
+        path: PathBuf,
+        rev: u64,
+        history: String,
+        changes: Arc<Vec<DiffLines>>,
+    },
     CenterOfWindow,
-    UpdateBufferLineChanges(BufferId, u64, HashMap<usize, char>),
     UpdateLineChanges(BufferId),
     PublishDiagnostics(PublishDiagnosticsParams),
     WorkDoneProgress(ProgressParams),
-    UpdateDiffFiles(Vec<PathBuf>),
+    UpdateDiffInfo(DiffInfo),
     ReloadBuffer(BufferId, u64, String),
     EnsureVisible((Rect, (f64, f64), Option<EnsureVisiblePosition>)),
     EnsureRectVisible(Rect),

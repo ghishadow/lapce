@@ -1,17 +1,20 @@
 use crate::buffer::{get_mod_time, Buffer, BufferId};
-use crate::core_proxy::CoreProxy;
 use crate::lsp::LspCatalog;
 use crate::plugin::{PluginCatalog, PluginDescription};
 use crate::terminal::{TermId, Terminal};
 use alacritty_terminal::event_loop::Msg;
 use alacritty_terminal::term::SizeInfo;
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context, Result};
 use crossbeam_channel::{unbounded, Receiver, Sender};
 use git2::{DiffOptions, Oid, Repository};
+use grep_matcher::Matcher;
+use grep_regex::{RegexMatcher, RegexMatcherBuilder};
+use grep_searcher::sinks::UTF8;
+use grep_searcher::{Searcher, SearcherBuilder};
 use jsonrpc_lite::{self, JsonRpc};
 use lapce_rpc::{self, Call, RequestId, RpcObject};
 use lsp_types::{CompletionItem, Position, TextDocumentContentChangeEvent};
-use notify::DebouncedEvent;
+use notify::Watcher;
 use parking_lot::Mutex;
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::json;
@@ -22,46 +25,33 @@ use std::{collections::HashSet, io::BufRead};
 use std::{path::PathBuf, sync::atomic::AtomicBool};
 use std::{sync::atomic, thread};
 use std::{sync::Arc, time::Duration};
-use xi_core_lib::watcher::{EventQueue, FileWatcher, Notify, WatchToken};
 use xi_rope::{RopeDelta, RopeInfo};
-
-pub const OPEN_FILE_EVENT_TOKEN: WatchToken = WatchToken(1);
-pub const GIT_EVENT_TOKEN: WatchToken = WatchToken(2);
 
 #[derive(Clone)]
 pub struct Dispatcher {
     pub sender: Arc<Sender<Value>>,
     pub git_sender: Sender<(BufferId, u64)>,
-    pub workspace: Arc<Mutex<PathBuf>>,
+    pub workspace: Arc<Mutex<Option<PathBuf>>>,
     pub buffers: Arc<Mutex<HashMap<BufferId, Buffer>>>,
     pub terminals: Arc<Mutex<HashMap<TermId, mio::channel::Sender<Msg>>>>,
     open_files: Arc<Mutex<HashMap<String, BufferId>>>,
     plugins: Arc<Mutex<PluginCatalog>>,
     pub lsp: Arc<Mutex<LspCatalog>>,
-    pub watcher: Arc<Mutex<Option<FileWatcher>>>,
-    pub workspace_updated: Arc<AtomicBool>,
+    pub watcher: Arc<Mutex<Option<notify::RecommendedWatcher>>>,
+    last_diff: Arc<Mutex<DiffInfo>>,
 }
 
-impl Notify for Dispatcher {
-    fn notify(&self) {
-        let dispatcher = self.clone();
-        thread::spawn(move || {
-            for (token, event) in
-                { dispatcher.watcher.lock().as_mut().unwrap().take_events() }
-                    .drain(..)
-            {
-                match token {
-                    OPEN_FILE_EVENT_TOKEN => match event {
-                        DebouncedEvent::Write(path)
-                        | DebouncedEvent::Create(path) => {
-                            if let Some(buffer_id) = {
-                                dispatcher
-                                    .open_files
-                                    .lock()
-                                    .get(&path.to_str().unwrap().to_string())
-                            } {
+impl notify::EventHandler for Dispatcher {
+    fn handle_event(&mut self, event: notify::Result<notify::Event>) {
+        if let Ok(event) = event {
+            for path in event.paths.iter() {
+                if let Some(path) = path.to_str() {
+                    if let Some(buffer_id) = self.open_files.lock().get(path) {
+                        match event.kind {
+                            notify::EventKind::Create(_)
+                            | notify::EventKind::Modify(_) => {
                                 if let Some(buffer) =
-                                    dispatcher.buffers.lock().get_mut(buffer_id)
+                                    self.buffers.lock().get_mut(buffer_id)
                                 {
                                     if get_mod_time(&buffer.path) == buffer.mod_time
                                     {
@@ -69,7 +59,7 @@ impl Notify for Dispatcher {
                                     }
                                     if !buffer.dirty {
                                         buffer.reload();
-                                        dispatcher.lsp.lock().update(
+                                        self.lsp.lock().update(
                                             buffer,
                                             &TextDocumentContentChangeEvent {
                                                 range: None,
@@ -78,7 +68,7 @@ impl Notify for Dispatcher {
                                             },
                                             buffer.rev,
                                         );
-                                        dispatcher.sender.send(json!({
+                                        self.sender.send(json!({
                                             "method": "reload_buffer",
                                             "params": {
                                                 "buffer_id": buffer_id,
@@ -89,18 +79,32 @@ impl Notify for Dispatcher {
                                     }
                                 }
                             }
+                            _ => (),
                         }
-                        _ => (),
-                    },
-                    GIT_EVENT_TOKEN => {
-                        dispatcher
-                            .workspace_updated
-                            .store(true, atomic::Ordering::Relaxed);
                     }
-                    WatchToken(_) => {}
                 }
             }
-        });
+            match event.kind {
+                notify::EventKind::Create(_)
+                | notify::EventKind::Modify(_)
+                | notify::EventKind::Remove(_) => {
+                    if let Some(workspace) = self.workspace.lock().clone() {
+                        if let Some(diff) = git_diff_new(&workspace) {
+                            if diff != *self.last_diff.lock() {
+                                self.send_notification(
+                                    "diff_info",
+                                    json!({
+                                        "diff": diff,
+                                    }),
+                                );
+                                *self.last_diff.lock() = diff;
+                            }
+                        }
+                    }
+                }
+                _ => (),
+            }
+        }
     }
 }
 
@@ -111,6 +115,7 @@ pub enum Notification {
     Initialize {
         workspace: PathBuf,
     },
+    Shutdown {},
     Update {
         buffer_id: BufferId,
         delta: RopeDelta,
@@ -122,6 +127,10 @@ pub enum Notification {
     },
     InstallPlugin {
         plugin: PluginDescription,
+    },
+    GitCommit {
+        message: String,
+        diffs: Vec<FileDiff>,
     },
     TerminalWrite {
         term_id: TermId,
@@ -145,10 +154,17 @@ pub enum Request {
         buffer_id: BufferId,
         path: PathBuf,
     },
+    BufferHead {
+        buffer_id: BufferId,
+        path: PathBuf,
+    },
     GetCompletion {
         request_id: usize,
         buffer_id: BufferId,
         position: Position,
+    },
+    GlobalSearch {
+        pattern: String,
     },
     CompletionResolve {
         buffer_id: BufferId,
@@ -194,6 +210,38 @@ pub struct NewBufferResponse {
     pub content: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BufferHeadResponse {
+    pub id: String,
+    pub content: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct DiffInfo {
+    pub head: String,
+    pub branches: Vec<String>,
+    pub diffs: Vec<FileDiff>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum FileDiff {
+    Modified(PathBuf),
+    Added(PathBuf),
+    Deleted(PathBuf),
+    Renamed(PathBuf, PathBuf),
+}
+
+impl FileDiff {
+    pub fn path(&self) -> &PathBuf {
+        match &self {
+            FileDiff::Modified(p)
+            | FileDiff::Added(p)
+            | FileDiff::Deleted(p)
+            | FileDiff::Renamed(_, p) => p,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct FileNodeItem {
     pub path_buf: PathBuf,
@@ -234,16 +282,17 @@ impl Dispatcher {
         let dispatcher = Dispatcher {
             sender: Arc::new(sender),
             git_sender,
-            workspace: Arc::new(Mutex::new(PathBuf::new())),
+            workspace: Arc::new(Mutex::new(None)),
             buffers: Arc::new(Mutex::new(HashMap::new())),
             open_files: Arc::new(Mutex::new(HashMap::new())),
             terminals: Arc::new(Mutex::new(HashMap::new())),
             plugins: Arc::new(Mutex::new(plugins)),
             lsp: Arc::new(Mutex::new(LspCatalog::new())),
             watcher: Arc::new(Mutex::new(None)),
-            workspace_updated: Arc::new(AtomicBool::new(false)),
+            last_diff: Arc::new(Mutex::new(DiffInfo::default())),
         };
-        *dispatcher.watcher.lock() = Some(FileWatcher::new(dispatcher.clone()));
+        *dispatcher.watcher.lock() =
+            Some(notify::recommended_watcher(dispatcher.clone()).unwrap());
         dispatcher.lsp.lock().dispatcher = Some(dispatcher.clone());
 
         let local_dispatcher = dispatcher.clone();
@@ -262,15 +311,8 @@ impl Dispatcher {
                 .start_all(local_dispatcher.clone());
         });
 
-        let local_dispatcher = dispatcher.clone();
-        thread::spawn(move || {
-            local_dispatcher.start_update_process(git_receiver);
-        });
+        dispatcher.start_update_process(git_receiver);
 
-        let local_dispatcher = dispatcher.clone();
-        thread::spawn(move || {
-            local_dispatcher.monitor_workspace_update();
-        });
         dispatcher
     }
 
@@ -284,7 +326,21 @@ impl Dispatcher {
                         self.handle_request(id, request);
                     }
                     Ok(Call::Notification(notification)) => {
-                        self.handle_notification(notification)
+                        match &notification {
+                            Notification::Shutdown {} => {
+                                for (_, sender) in self.terminals.lock().iter() {
+                                    sender.send(Msg::Shutdown);
+                                }
+                                self.open_files.lock().clear();
+                                self.buffers.lock().clear();
+                                self.plugins.lock().stop();
+                                self.lsp.lock().stop();
+                                self.watcher.lock().take();
+                                return Ok(());
+                            }
+                            _ => (),
+                        }
+                        self.handle_notification(notification);
                     }
                     Err(e) => {}
                 }
@@ -293,57 +349,31 @@ impl Dispatcher {
         Ok(())
     }
 
-    pub fn monitor_workspace_update(&self) -> Result<()> {
-        loop {
-            thread::sleep(Duration::from_secs(1));
-            if self.workspace_updated.load(atomic::Ordering::Relaxed) {
-                self.workspace_updated
-                    .store(false, atomic::Ordering::Relaxed);
-                if let Some(diff_files) = git_diff(&self.workspace.lock()) {
-                    self.send_notification(
-                        "diff_files",
-                        json!({
-                            "files": diff_files,
-                        }),
-                    );
+    pub fn start_update_process(&self, receiver: Receiver<(BufferId, u64)>) {
+        let buffers = self.buffers.clone();
+        let lsp = self.lsp.clone();
+        thread::spawn(move || loop {
+            match receiver.recv() {
+                Ok((buffer_id, rev)) => {
+                    let buffers = buffers.lock();
+                    let buffer = buffers.get(&buffer_id).unwrap();
+                    let (path, content) = if buffer.rev != rev {
+                        continue;
+                    } else {
+                        (
+                            buffer.path.clone(),
+                            buffer.slice_to_cow(..buffer.len()).to_string(),
+                        )
+                    };
+
+                    lsp.lock().get_semantic_tokens(buffer);
+                }
+                Err(_) => {
+                    eprintln!("update process exit");
+                    return;
                 }
             }
-        }
-    }
-
-    pub fn start_update_process(
-        &self,
-        receiver: Receiver<(BufferId, u64)>,
-    ) -> Result<()> {
-        loop {
-            let workspace = self.workspace.lock().clone();
-            let (buffer_id, rev) = receiver.recv()?;
-            let buffers = self.buffers.lock();
-            let buffer = buffers.get(&buffer_id).unwrap();
-            let (path, content) = if buffer.rev != rev {
-                continue;
-            } else {
-                (
-                    buffer.path.clone(),
-                    buffer.slice_to_cow(..buffer.len()).to_string(),
-                )
-            };
-
-            self.lsp.lock().get_semantic_tokens(buffer);
-
-            if let Some((diff, line_changes)) =
-                file_git_diff(&workspace, &PathBuf::from(path), &content)
-            {
-                self.sender.send(json!({
-                    "method": "update_git",
-                    "params": {
-                        "buffer_id": buffer_id,
-                        "line_changes": line_changes,
-                        "rev": rev,
-                    },
-                }));
-            }
-        }
+        });
     }
 
     pub fn next<R: BufRead>(
@@ -393,43 +423,23 @@ impl Dispatcher {
     fn handle_notification(&self, rpc: Notification) {
         match rpc {
             Notification::Initialize { workspace } => {
-                *self.workspace.lock() = workspace.clone();
-                // let mut items = Vec::new();
-                // if let Ok(entries) = fs::read_dir(&workspace) {
-                //     for entry in entries {
-                //         if let Ok(entry) = entry {
-                //             let item = FileNodeItem {
-                //                 path_buf: entry.path(),
-                //                 is_dir: entry.path().is_dir(),
-                //                 open: false,
-                //                 read: false,
-                //                 children: Vec::new(),
-                //                 children_open_count: 0,
-                //             };
-                //             items.push(item);
-                //         }
-                //     }
-                // }
-                // self.send_notification(
-                //     "list_dir",
-                //     json!({
-                //         "items": items,
-                //     }),
-                // );
-                self.watcher.lock().as_mut().unwrap().watch(
-                    &workspace,
-                    true,
-                    GIT_EVENT_TOKEN,
-                );
-                if let Some(diff_files) = git_diff(&workspace) {
+                *self.workspace.lock() = Some(workspace.clone());
+                self.watcher
+                    .lock()
+                    .as_mut()
+                    .unwrap()
+                    .watch(&workspace, notify::RecursiveMode::Recursive);
+                if let Some(diff) = git_diff_new(&workspace) {
                     self.send_notification(
-                        "diff_files",
+                        "diff_info",
                         json!({
-                            "files": diff_files,
+                            "diff": diff,
                         }),
                     );
+                    *self.last_diff.lock() = diff;
                 }
             }
+            Notification::Shutdown {} => {}
             Notification::Update {
                 buffer_id,
                 delta,
@@ -466,6 +476,7 @@ impl Dispatcher {
                 let dispatcher = self.clone();
                 std::thread::spawn(move || {
                     terminal.run(dispatcher);
+                    eprintln!("terminal exit");
                 });
             }
             Notification::TerminalClose { term_id } => {
@@ -497,17 +508,25 @@ impl Dispatcher {
                 );
                 tx.send(Msg::Resize(size));
             }
+            Notification::GitCommit { message, diffs } => {
+                eprintln!("received git commit");
+                if let Some(workspace) = self.workspace.lock().clone() {
+                    if let Err(e) = git_commit(&workspace, &message, diffs) {
+                        eprintln!("git commit error {e}");
+                    }
+                }
+            }
         }
     }
 
     fn handle_request(&self, id: RequestId, rpc: Request) {
         match rpc {
             Request::NewBuffer { buffer_id, path } => {
-                self.watcher.lock().as_mut().unwrap().watch(
-                    &path,
-                    true,
-                    OPEN_FILE_EVENT_TOKEN,
-                );
+                self.watcher
+                    .lock()
+                    .as_mut()
+                    .unwrap()
+                    .watch(&path, notify::RecursiveMode::Recursive);
                 self.open_files
                     .lock()
                     .insert(path.to_str().unwrap().to_string(), buffer_id);
@@ -520,6 +539,21 @@ impl Dispatcher {
                     "id": id,
                     "result": resp,
                 }));
+            }
+            Request::BufferHead { buffer_id, path } => {
+                if let Some(workspace) = self.workspace.lock().clone() {
+                    let result = file_get_head(&workspace, &path);
+                    if let Ok((blob_id, content)) = result {
+                        let resp = BufferHeadResponse {
+                            id: "head".to_string(),
+                            content,
+                        };
+                        self.sender.send(json!({
+                            "id": id,
+                            "result": resp,
+                        }));
+                    }
+                }
             }
             Request::GetCompletion {
                 buffer_id,
@@ -614,45 +648,23 @@ impl Dispatcher {
                 });
             }
             Request::GetFiles { path } => {
-                eprintln!("get files");
-                let workspace = self.workspace.lock().clone();
-                let local_dispatcher = self.clone();
-                thread::spawn(move || {
-                    let mut items = Vec::new();
-                    let mut dirs = Vec::new();
-                    dirs.push(workspace.clone());
-                    while let Some(dir) = dirs.pop() {
-                        if let Ok(readdir) = fs::read_dir(dir) {
-                            for entry in readdir {
-                                let entry = entry.unwrap();
-                                let path = entry.path();
-                                if entry
-                                    .file_name()
-                                    .to_str()
-                                    .unwrap()
-                                    .starts_with(".")
-                                {
-                                    continue;
-                                }
-                                if path.is_dir() {
-                                    if !path
-                                        .as_path()
-                                        .to_str()
-                                        .unwrap()
-                                        .to_string()
-                                        .ends_with("target")
-                                    {
-                                        dirs.push(path);
+                if let Some(workspace) = self.workspace.lock().clone() {
+                    let local_dispatcher = self.clone();
+                    thread::spawn(move || {
+                        let mut items = Vec::new();
+                        for result in ignore::Walk::new(workspace) {
+                            if let Ok(path) = result {
+                                if let Some(file_type) = path.file_type() {
+                                    if file_type.is_file() {
+                                        items.push(path.into_path());
                                     }
-                                } else {
-                                    items.push(path.to_str().unwrap().to_string());
                                 }
                             }
                         }
-                    }
-                    local_dispatcher
-                        .respond(id, Ok(serde_json::to_value(items).unwrap()));
-                });
+                        local_dispatcher
+                            .respond(id, Ok(serde_json::to_value(items).unwrap()));
+                    });
+                }
             }
             Request::Save { rev, buffer_id } => {
                 let mut buffers = self.buffers.lock();
@@ -660,6 +672,57 @@ impl Dispatcher {
                 let resp = buffer.save(rev).map(|r| json!({}));
                 self.lsp.lock().save_buffer(buffer);
                 self.respond(id, resp);
+            }
+            Request::GlobalSearch { pattern } => {
+                if let Some(workspace) = self.workspace.lock().clone() {
+                    let local_dispatcher = self.clone();
+                    thread::spawn(move || {
+                        let mut matches = HashMap::new();
+                        let pattern = regex::escape(&pattern);
+                        if let Ok(matcher) = RegexMatcherBuilder::new()
+                            .case_insensitive(true)
+                            .build_literals(&[&pattern])
+                        {
+                            let mut searcher = SearcherBuilder::new().build();
+                            for result in ignore::Walk::new(workspace) {
+                                if let Ok(path) = result {
+                                    if let Some(file_type) = path.file_type() {
+                                        if file_type.is_file() {
+                                            let path = path.into_path();
+                                            let mut line_matches = Vec::new();
+                                            searcher.search_path(
+                                                &matcher,
+                                                path.clone(),
+                                                UTF8(|lnum, line| {
+                                                    let mymatch = matcher
+                                                        .find(line.as_bytes())?
+                                                        .unwrap();
+                                                    line_matches.push((
+                                                        lnum,
+                                                        (
+                                                            mymatch.start(),
+                                                            mymatch.end(),
+                                                        ),
+                                                        line.to_string(),
+                                                    ));
+                                                    Ok(true)
+                                                }),
+                                            );
+                                            if line_matches.len() > 0 {
+                                                matches.insert(
+                                                    path.clone(),
+                                                    line_matches,
+                                                );
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        local_dispatcher
+                            .respond(id, Ok(serde_json::to_value(matches).unwrap()));
+                    });
+                }
             }
         }
     }
@@ -674,15 +737,89 @@ pub struct DiffHunk {
     pub header: String,
 }
 
-fn git_diff(workspace_path: &PathBuf) -> Option<Vec<String>> {
-    let repo = Repository::open(workspace_path.to_str()?).ok()?;
-    let mut diff_files = HashSet::new();
-    let diff = repo.diff_index_to_workdir(None, None).ok()?;
-    for delta in diff.deltas() {
-        if let Some(path) = delta.new_file().path() {
-            if let Some(s) = path.to_str() {
-                diff_files.insert(workspace_path.join(s).to_str()?.to_string());
+fn git_commit(
+    workspace_path: &PathBuf,
+    message: &str,
+    diffs: Vec<FileDiff>,
+) -> Result<()> {
+    let repo = Repository::open(
+        workspace_path
+            .to_str()
+            .ok_or(anyhow!("workspace path can't changed to str"))?,
+    )?;
+    let mut index = repo.index()?;
+    for diff in diffs {
+        match diff {
+            FileDiff::Modified(p) | FileDiff::Added(p) => {
+                index.add_path(p.strip_prefix(workspace_path)?)?;
             }
+            FileDiff::Renamed(a, d) => {
+                index.add_path(a.strip_prefix(workspace_path)?)?;
+                index.remove_path(d.strip_prefix(workspace_path)?)?;
+            }
+            FileDiff::Deleted(p) => {
+                index.remove_path(p.strip_prefix(workspace_path)?)?;
+            }
+        }
+    }
+    index.write()?;
+    let tree = index.write_tree()?;
+    let tree = repo.find_tree(tree)?;
+    let signature = repo.signature()?;
+    let parent = repo.head()?.peel_to_commit()?;
+    repo.commit(
+        Some("HEAD"),
+        &signature,
+        &signature,
+        message,
+        &tree,
+        &[&parent],
+    )?;
+    Ok(())
+}
+
+fn git_delta_format(
+    workspace_path: &PathBuf,
+    delta: &git2::DiffDelta,
+) -> Option<(git2::Delta, git2::Oid, PathBuf)> {
+    match delta.status() {
+        git2::Delta::Added | git2::Delta::Untracked => Some((
+            git2::Delta::Added,
+            delta.new_file().id(),
+            delta.new_file().path().map(|p| workspace_path.join(p))?,
+        )),
+        git2::Delta::Deleted => Some((
+            git2::Delta::Deleted,
+            delta.old_file().id(),
+            delta.old_file().path().map(|p| workspace_path.join(p))?,
+        )),
+        git2::Delta::Modified => Some((
+            git2::Delta::Modified,
+            delta.new_file().id(),
+            delta.new_file().path().map(|p| workspace_path.join(p))?,
+        )),
+        _ => None,
+    }
+}
+
+fn git_diff_new(workspace_path: &PathBuf) -> Option<DiffInfo> {
+    let repo = Repository::open(workspace_path.to_str()?).ok()?;
+    let head = repo.head().ok()?;
+    let name = head.shorthand()?.to_string();
+
+    let mut branches = Vec::new();
+    for branch in repo.branches(None).ok()? {
+        branches.push(branch.ok()?.0.name().ok()??.to_string());
+    }
+
+    let mut deltas = Vec::new();
+    let mut diff_options = DiffOptions::new();
+    let diff = repo
+        .diff_index_to_workdir(None, Some(diff_options.include_untracked(true)))
+        .ok()?;
+    for delta in diff.deltas() {
+        if let Some(delta) = git_delta_format(workspace_path, &delta) {
+            deltas.push(delta);
         }
     }
     let cached_diff = repo
@@ -695,15 +832,110 @@ fn git_diff(workspace_path: &PathBuf) -> Option<Vec<String>> {
         )
         .ok()?;
     for delta in cached_diff.deltas() {
-        if let Some(path) = delta.new_file().path() {
-            if let Some(s) = path.to_str() {
-                diff_files.insert(workspace_path.join(s).to_str()?.to_string());
+        if let Some(delta) = git_delta_format(workspace_path, &delta) {
+            deltas.push(delta);
+        }
+    }
+    let mut renames = Vec::new();
+    let mut renamed_deltas = HashSet::new();
+
+    for (i, delta) in deltas.iter().enumerate() {
+        if delta.0 == git2::Delta::Added {
+            for (j, d) in deltas.iter().enumerate() {
+                if d.0 == git2::Delta::Deleted && d.1 == delta.1 {
+                    renames.push((i, j));
+                    renamed_deltas.insert(i);
+                    renamed_deltas.insert(j);
+                    break;
+                }
             }
         }
     }
-    let mut diff_files: Vec<String> = diff_files.into_iter().collect();
-    diff_files.sort();
-    Some(diff_files)
+
+    let mut file_diffs = Vec::new();
+    for (i, j) in renames.iter() {
+        file_diffs.push(FileDiff::Renamed(
+            deltas[*i].2.clone(),
+            deltas[*j].2.clone(),
+        ));
+    }
+    for (i, delta) in deltas.iter().enumerate() {
+        if renamed_deltas.contains(&i) {
+            continue;
+        }
+        let diff = match delta.0 {
+            git2::Delta::Added => FileDiff::Added(delta.2.clone()),
+            git2::Delta::Deleted => FileDiff::Deleted(delta.2.clone()),
+            git2::Delta::Modified => FileDiff::Modified(delta.2.clone()),
+            _ => continue,
+        };
+        file_diffs.push(diff);
+    }
+    file_diffs.sort_by_key(|d| match d {
+        FileDiff::Modified(p)
+        | FileDiff::Added(p)
+        | FileDiff::Renamed(p, _)
+        | FileDiff::Deleted(p) => p.clone(),
+    });
+    Some(DiffInfo {
+        head: name,
+        branches,
+        diffs: file_diffs,
+    })
+}
+
+// fn git_diff(workspace_path: &PathBuf) -> Option<Vec<String>> {
+//     let repo = Repository::open(workspace_path.to_str()?).ok()?;
+//     let mut diff_files = HashSet::new();
+//     let mut diff_options = DiffOptions::new();
+//     let diff = repo
+//         .diff_index_to_workdir(None, Some(diff_options.include_untracked(true)))
+//         .ok()?;
+//     for delta in diff.deltas() {
+//         eprintln!("delta {:?}", delta);
+//         if let Some(path) = delta.new_file().path() {
+//             if let Some(s) = path.to_str() {
+//                 diff_files.insert(workspace_path.join(s).to_str()?.to_string());
+//             }
+//         }
+//     }
+//     let cached_diff = repo
+//         .diff_tree_to_index(
+//             repo.find_tree(repo.revparse_single("HEAD^{tree}").ok()?.id())
+//                 .ok()
+//                 .as_ref(),
+//             None,
+//             None,
+//         )
+//         .ok()?;
+//     for delta in cached_diff.deltas() {
+//         eprintln!("delta {:?}", delta);
+//         if let Some(path) = delta.new_file().path() {
+//             if let Some(s) = path.to_str() {
+//                 diff_files.insert(workspace_path.join(s).to_str()?.to_string());
+//             }
+//         }
+//     }
+//     let mut diff_files: Vec<String> = diff_files.into_iter().collect();
+//     diff_files.sort();
+//     Some(diff_files)
+// }
+
+fn file_get_head(
+    workspace_path: &PathBuf,
+    path: &PathBuf,
+) -> Result<(String, String)> {
+    let repo =
+        Repository::open(workspace_path.to_str().ok_or(anyhow!("can't to str"))?)?;
+    let head = repo.head()?;
+    let tree = head.peel_to_tree()?;
+    let tree_entry = tree.get_path(path.strip_prefix(workspace_path)?)?;
+    let blob = repo.find_blob(tree_entry.id())?;
+    let id = blob.id().to_string();
+    let content = std::str::from_utf8(blob.content())
+        .with_context(|| "content bytes to string")?
+        .to_string();
+    Ok((id, content))
 }
 
 fn file_git_diff(

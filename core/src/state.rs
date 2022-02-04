@@ -23,10 +23,6 @@ use std::{
 use std::{io::BufReader, sync::atomic::AtomicU64};
 use std::{path::Path, sync::atomic};
 use toml;
-use xi_rpc::Handler;
-use xi_rpc::RpcLoop;
-use xi_rpc::RpcPeer;
-use xi_trace::enable_tracing;
 
 #[derive(PartialEq)]
 enum KeymapMatch {
@@ -97,7 +93,7 @@ impl Display for LapceWorkspaceType {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct LapceWorkspace {
     pub kind: LapceWorkspaceType,
-    pub path: PathBuf,
+    pub path: Option<PathBuf>,
     pub last_open: u64,
 }
 
@@ -105,21 +101,24 @@ impl Default for LapceWorkspace {
     fn default() -> Self {
         Self {
             kind: LapceWorkspaceType::Local,
-            path: directories::UserDirs::new()
-                .unwrap()
-                .home_dir()
-                .to_path_buf(),
-            last_open: std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_secs(),
+            path: None,
+            last_open: 0,
         }
     }
 }
 
 impl Display for LapceWorkspace {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}:{}", self.kind, self.path.to_str().unwrap())
+        write!(
+            f,
+            "{}:{}",
+            self.kind,
+            self.path
+                .as_ref()
+                .and_then(|p| p.to_str())
+                .map(|p| p.to_string())
+                .unwrap_or("".to_string())
+        )
     }
 }
 
@@ -173,10 +172,5 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_check_condition() {
-        // let rope = Rope::from_str("abc\nabc\n").unwrap();
-        // assert_eq!(rope.len(), 9);
-        // assert_eq!(rope.offset_of_line(1), 1);
-        // assert_eq!(rope.line_of_offset(rope.len()), 9);
-    }
+    fn test_check_condition() {}
 }
