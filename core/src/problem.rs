@@ -15,10 +15,10 @@ use lsp_types::DiagnosticSeverity;
 use crate::{
     command::{LapceUICommand, LAPCE_UI_COMMAND},
     config::LapceTheme,
-    data::{EditorDiagnostic, EditorKind, FocusArea, LapceTabData, PanelKind},
+    data::{EditorDiagnostic, FocusArea, LapceTabData, PanelKind},
     editor::EditorLocationNew,
     panel::{LapcePanel, PanelHeaderKind, PanelSection},
-    split::LapceSplitNew,
+    split::{LapceSplitNew, SplitDirection},
     svg::{file_svg_new, get_svg},
 };
 
@@ -41,19 +41,23 @@ impl ProblemData {
 
     pub fn new_panel(&self) -> LapcePanel {
         LapcePanel::new(
+            PanelKind::Problem,
             self.widget_id,
             self.split_id,
-            PanelHeaderKind::simple("Problem".to_string()),
+            SplitDirection::Vertical,
+            PanelHeaderKind::Simple("Problem".to_string()),
             vec![
                 (
                     self.error_widget_id,
-                    PanelHeaderKind::simple("Errors".to_string()),
+                    PanelHeaderKind::Simple("Errors".to_string()),
                     ProblemContent::new(DiagnosticSeverity::Error).boxed(),
+                    None,
                 ),
                 (
                     self.warning_widget_id,
-                    PanelHeaderKind::simple("Warnings".to_string()),
+                    PanelHeaderKind::Simple("Warnings".to_string()),
                     ProblemContent::new(DiagnosticSeverity::Warning).boxed(),
+                    None,
                 ),
             ],
         )
@@ -131,7 +135,7 @@ impl ProblemContent {
                     ctx.submit_command(Command::new(
                         LAPCE_UI_COMMAND,
                         LapceUICommand::JumpToLocation(
-                            EditorKind::SplitActive,
+                            None,
                             EditorLocationNew {
                                 path: path.clone(),
                                 position: Some(
@@ -143,6 +147,7 @@ impl ProblemContent {
                                         .unwrap_or(d.diagnositc.range.start.clone()),
                                 ),
                                 scroll_offset: None,
+                                hisotry: None,
                             },
                         ),
                         Target::Widget(data.id),
@@ -160,7 +165,7 @@ impl ProblemContent {
                         ctx.submit_command(Command::new(
                             LAPCE_UI_COMMAND,
                             LapceUICommand::JumpToLocation(
-                                EditorKind::SplitActive,
+                                None,
                                 EditorLocationNew {
                                     path: related
                                         .location
@@ -171,6 +176,7 @@ impl ProblemContent {
                                         related.location.range.start.clone(),
                                     ),
                                     scroll_offset: None,
+                                    hisotry: None,
                                 },
                             ),
                             Target::Widget(data.id),
@@ -263,15 +269,17 @@ impl Widget<LapceTabData> for ProblemContent {
     fn paint(&mut self, ctx: &mut PaintCtx, data: &LapceTabData, env: &Env) {
         let line_height = data.config.editor.line_height as f64;
 
-        let size = ctx.size();
-        let n = (self.mouse_pos.y / line_height).floor() as usize;
-        ctx.fill(
-            Size::new(size.width, line_height)
-                .to_rect()
-                .with_origin(Point::new(0.0, line_height * n as f64)),
-            data.config
-                .get_color_unchecked(LapceTheme::EDITOR_CURRENT_LINE),
-        );
+        if ctx.is_hot() {
+            let size = ctx.size();
+            let n = (self.mouse_pos.y / line_height).floor() as usize;
+            ctx.fill(
+                Size::new(size.width, line_height)
+                    .to_rect()
+                    .with_origin(Point::new(0.0, line_height * n as f64)),
+                data.config
+                    .get_color_unchecked(LapceTheme::EDITOR_CURRENT_LINE),
+            );
+        }
 
         let rect = ctx.region().bounding_box();
         let min = (rect.y0 / line_height).floor() as usize;
@@ -327,9 +335,9 @@ impl Widget<LapceTabData> for ProblemContent {
             );
 
             let mut path = path.clone();
-            if let Some(workspace) = data.workspace.as_ref() {
+            if let Some(workspace_path) = data.workspace.path.as_ref() {
                 path = path
-                    .strip_prefix(&workspace.path)
+                    .strip_prefix(workspace_path)
                     .unwrap_or(&path)
                     .to_path_buf();
             }

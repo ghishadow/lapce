@@ -2,10 +2,12 @@ use std::{collections::HashMap, path::PathBuf, sync::Arc};
 
 use alacritty_terminal::ansi::CursorShape;
 use anyhow::Result;
-use druid::{Point, Rect, Selector, Size, WidgetId};
+use druid::{Point, Rect, Selector, Size, WidgetId, WindowId};
 use indexmap::IndexMap;
 use lapce_proxy::{
-    dispatch::FileNodeItem, plugin::PluginDescription, terminal::TermId,
+    dispatch::{DiffInfo, FileDiff, FileNodeItem},
+    plugin::PluginDescription,
+    terminal::TermId,
 };
 use lsp_types::{
     CodeActionResponse, CompletionItem, CompletionResponse, Location, Position,
@@ -16,16 +18,18 @@ use strum::{self, EnumMessage, IntoEnumIterator};
 use strum_macros::{Display, EnumIter, EnumMessage, EnumProperty, EnumString};
 use tree_sitter::Tree;
 use tree_sitter_highlight::Highlight;
-use xi_rope::spans::Spans;
+use xi_rope::{spans::Spans, Rope};
 
 use crate::{
     buffer::BufferId,
-    buffer::{InvalLines, Style},
-    data::EditorKind,
+    buffer::{DiffLines, InvalLines, Style},
+    data::{EditorTabChild, SplitContent},
     editor::{EditorLocation, EditorLocationNew, HighlightTextLayout},
+    menu::MenuItem,
     movement::{LinePosition, Movement},
     palette::{NewPaletteItem, PaletteType},
-    split::SplitMoveDirection,
+    proxy::ProxyStatus,
+    split::{SplitDirection, SplitMoveDirection},
     state::LapceWorkspace,
 };
 
@@ -132,6 +136,14 @@ pub enum LapceWorkbenchCommand {
     #[strum(message = "Reload Window")]
     ReloadWindow,
 
+    #[strum(message = "New Window")]
+    #[strum(serialize = "new_window")]
+    NewWindow,
+
+    #[strum(serialize = "connect_ssh_host")]
+    #[strum(message = "Connect to SSH Host")]
+    ConnectSshHost,
+
     #[strum(serialize = "palette.line")]
     PaletteLine,
 
@@ -144,14 +156,24 @@ pub enum LapceWorkbenchCommand {
     #[strum(serialize = "palette.command")]
     PaletteCommand,
 
+    #[strum(message = "Open Recent Workspace")]
     #[strum(serialize = "palette.workspace")]
     PaletteWorkspace,
+
+    #[strum(serialize = "source_control.checkout_branch")]
+    CheckoutBranch,
 
     #[strum(serialize = "toggle_maximized_panel")]
     ToggleMaximizedPanel,
 
     #[strum(serialize = "hide_panel")]
     HidePanel,
+
+    #[strum(serialize = "show_panel")]
+    ShowPanel,
+
+    #[strum(serialize = "toggle_panel")]
+    TogglePanel,
 
     #[strum(serialize = "toggle_terminal")]
     ToggleTerminal,
@@ -168,11 +190,17 @@ pub enum LapceWorkbenchCommand {
     #[strum(serialize = "toggle_problem")]
     ToggleProblem,
 
+    #[strum(serialize = "toggle_search")]
+    ToggleSearch,
+
     #[strum(serialize = "focus_editor")]
     FocusEditor,
 
     #[strum(serialize = "focus_terminal")]
     FocusTerminal,
+
+    #[strum(serialize = "source_control_commit")]
+    SourceControlCommit,
 }
 
 #[derive(Display, EnumString, EnumIter, Clone, PartialEq, Debug, EnumMessage)]
@@ -273,6 +301,8 @@ pub enum LapceCommand {
     GetReferences,
     #[strum(serialize = "insert_new_line")]
     InsertNewLine,
+    #[strum(serialize = "insert_tab")]
+    InsertTab,
     #[strum(serialize = "word_backward")]
     WordBackward,
     #[strum(serialize = "word_foward")]
@@ -305,8 +335,11 @@ pub enum LapceCommand {
     Redo,
     #[strum(serialize = "center_of_window")]
     CenterOfWindow,
+
+    #[strum(message = "Go to Definition")]
     #[strum(serialize = "goto_definition")]
     GotoDefinition,
+
     #[strum(serialize = "jump_location_backward")]
     JumpLocationBackward,
     #[strum(serialize = "jump_location_forward")]
@@ -315,6 +348,10 @@ pub enum LapceCommand {
     NextError,
     #[strum(serialize = "previous_error")]
     PreviousError,
+    #[strum(serialize = "next_diff")]
+    NextDiff,
+    #[strum(serialize = "previous_diff")]
+    PreviousDiff,
     #[strum(serialize = "format_document")]
     #[strum(message = "Format Document")]
     FormatDocument,
@@ -401,15 +438,29 @@ pub enum LapceUICommand {
         content: String,
         locations: Vec<(WidgetId, EditorLocationNew)>,
     },
+    LoadBufferHead {
+        path: PathBuf,
+        id: String,
+        content: Rope,
+    },
     LoadBufferAndGoToPosition {
         path: PathBuf,
         content: String,
         editor_view_id: WidgetId,
         location: EditorLocationNew,
     },
+    HideMenu,
+    ShowMenu(Point, Arc<Vec<MenuItem>>),
+    UpdateSearch(String),
+    GlobalSearchResult(
+        String,
+        Arc<HashMap<PathBuf, Vec<(usize, (usize, usize), String)>>>,
+    ),
+    CancelFilePicker,
     SetWorkspace(LapceWorkspace),
     SetTheme(String, bool),
     OpenFile(PathBuf),
+    OpenFileDiff(PathBuf, String),
     CancelCompletion(usize),
     ResolveCompletion(BufferId, u64, usize, CompletionItem),
     UpdateCompletion(usize, String, CompletionResponse),
@@ -418,12 +469,15 @@ pub enum LapceUICommand {
     ShowCodeActions,
     CancelCodeActions,
     Focus,
+    EnsureEditorTabActiveVisble,
     FocusSourceControl,
     FocusEditor,
     RunPalette(Option<PaletteType>),
     RunPaletteReferences(Vec<EditorLocationNew>),
     UpdatePaletteItems(String, Vec<NewPaletteItem>),
     FilterPaletteItems(String, String, Vec<NewPaletteItem>),
+    UpdatePickerPwd(PathBuf),
+    UpdatePickerItems(PathBuf, HashMap<PathBuf, FileNodeItem>),
     UpdateExplorerItems(usize, PathBuf, Vec<FileNodeItem>),
     UpdateInstalledPlugins(HashMap<String, PluginDescription>),
     UpdatePluginDescriptions(Vec<PluginDescription>),
@@ -440,6 +494,7 @@ pub enum LapceUICommand {
     NextTab,
     PreviousTab,
     FilterItems,
+    NewWindow(WindowId),
     ReloadWindow,
     CloseBuffers(Vec<BufferId>),
     RequestPaintRect(Rect),
@@ -458,18 +513,30 @@ pub enum LapceUICommand {
         highlights: Spans<Style>,
         semantic_tokens: bool,
     },
+    UpdateHistoryStyle {
+        id: BufferId,
+        path: PathBuf,
+        history: String,
+        highlights: Spans<Style>,
+    },
     UpdateSyntaxTree {
         id: BufferId,
         path: PathBuf,
         rev: u64,
         tree: Tree,
     },
+    UpdateHisotryChanges {
+        id: BufferId,
+        path: PathBuf,
+        rev: u64,
+        history: String,
+        changes: Arc<Vec<DiffLines>>,
+    },
     CenterOfWindow,
-    UpdateBufferLineChanges(BufferId, u64, HashMap<usize, char>),
     UpdateLineChanges(BufferId),
     PublishDiagnostics(PublishDiagnosticsParams),
     WorkDoneProgress(ProgressParams),
-    UpdateDiffFiles(Vec<PathBuf>),
+    UpdateDiffInfo(DiffInfo),
     ReloadBuffer(BufferId, u64, String),
     EnsureVisible((Rect, (f64, f64), Option<EnsureVisiblePosition>)),
     EnsureRectVisible(Rect),
@@ -479,20 +546,29 @@ pub enum LapceUICommand {
     Scroll((f64, f64)),
     ScrollTo((f64, f64)),
     ForceScrollTo(f64, f64),
+    HomeDir(PathBuf),
+    ProxyUpdateStatus(ProxyStatus),
     CloseTerminal(TermId),
-    SplitTerminal(bool, WidgetId, Option<WidgetId>),
-    SplitTerminalClose(TermId, WidgetId, Option<WidgetId>),
+    SplitTerminal(bool, WidgetId),
+    SplitTerminalClose(TermId, WidgetId),
     SplitEditor(bool, WidgetId),
     SplitEditorMove(SplitMoveDirection, WidgetId),
     SplitEditorExchange(WidgetId),
     SplitEditorClose(WidgetId),
     Split(bool),
-    SplitExchange,
     SplitClose,
+    SplitExchange(SplitContent),
+    SplitRemove(SplitContent),
     SplitMove(SplitMoveDirection),
-    JumpToPosition(EditorKind, Position),
-    JumpToLine(EditorKind, usize),
-    JumpToLocation(EditorKind, EditorLocationNew),
+    SplitAdd(usize, SplitContent, bool),
+    SplitReplace(usize, SplitContent),
+    SplitChangeDirectoin(SplitDirection),
+    EditorTabAdd(usize, EditorTabChild),
+    EditorTabRemove(usize, bool, bool),
+    EditorTabSwap(usize, usize),
+    JumpToPosition(Option<WidgetId>, Position),
+    JumpToLine(Option<WidgetId>, usize),
+    JumpToLocation(Option<WidgetId>, EditorLocationNew),
     TerminalJumpToLine(i32),
     GoToLocationNew(WidgetId, EditorLocationNew),
     GotoReference(WidgetId, usize, EditorLocationNew),

@@ -1,6 +1,5 @@
 use druid::{piet::PietText, Env, Point, Rect, Size};
 use serde::{Deserialize, Serialize};
-use xi_core_lib::selection::InsertDrift;
 use xi_rope::{RopeDelta, Transformer};
 
 use crate::{
@@ -11,6 +10,16 @@ use crate::{
     theme::OldLapceTheme,
 };
 use std::cmp::{max, min};
+
+#[derive(Copy, Clone)]
+pub enum InsertDrift {
+    /// Indicates this edit should happen within any (non-caret) selections if possible.
+    Inside,
+    /// Indicates this edit should happen outside any selections if possible.
+    Outside,
+    /// Indicates to do whatever the `after` bool says to do
+    Default,
+}
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Cursor {
@@ -73,6 +82,28 @@ impl Cursor {
 
     pub fn current_line(&self, buffer: &BufferNew) -> usize {
         buffer.line_of_offset(self.offset())
+    }
+
+    pub fn current_char(
+        &self,
+        text: &mut PietText,
+        buffer: &BufferNew,
+        config: &Config,
+    ) -> (f64, f64) {
+        let offset = self.offset();
+        let line = buffer.line_of_offset(self.offset());
+        let next = buffer.next_grapheme_offset(
+            offset,
+            1,
+            buffer.offset_line_end(offset, true),
+        );
+
+        let (_, x0) = buffer.offset_to_line_col(offset);
+        let (_, x1) = buffer.offset_to_line_col(next);
+        let width = config.editor_text_width(text, "W");
+        let x0 = x0 as f64 * width;
+        let x1 = x1 as f64 * width;
+        (x0, x1)
     }
 
     pub fn lines(&self, buffer: &BufferNew) -> (usize, usize) {

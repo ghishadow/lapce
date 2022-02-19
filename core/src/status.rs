@@ -50,22 +50,12 @@ impl LapceStatusNew {
         let left_panels = data
             .panels
             .get(&PanelPosition::BottomLeft)
-            .map(|p| {
-                p.widgets
-                    .iter()
-                    .map(|(_, kind)| kind.clone())
-                    .collect::<Vec<PanelKind>>()
-            })
+            .map(|p| p.widgets.clone())
             .unwrap_or(Vec::new());
         let mut right_panels = data
             .panels
             .get(&PanelPosition::BottomRight)
-            .map(|p| {
-                p.widgets
-                    .iter()
-                    .map(|(_, kind)| kind.clone())
-                    .collect::<Vec<PanelKind>>()
-            })
+            .map(|p| p.widgets.clone())
             .unwrap_or(Vec::new());
         let mut panels = left_panels;
         panels.append(&mut right_panels);
@@ -84,6 +74,7 @@ impl LapceStatusNew {
                     }
                     PanelKind::Plugin => LapceWorkbenchCommand::TogglePlugin,
                     PanelKind::Terminal => LapceWorkbenchCommand::ToggleTerminal,
+                    PanelKind::Search => LapceWorkbenchCommand::ToggleSearch,
                     PanelKind::Problem => LapceWorkbenchCommand::ToggleProblem,
                 };
                 LapceIcon {
@@ -170,11 +161,17 @@ impl Widget<LapceTabData> for LapceStatusNew {
         data: &LapceTabData,
         env: &druid::Env,
     ) {
-        if old_data.main_split.active_editor().cursor.get_mode()
-            != data.main_split.active_editor().cursor.get_mode()
-        {
-            ctx.request_paint();
-            return;
+        match (
+            old_data.main_split.active_editor(),
+            data.main_split.active_editor(),
+        ) {
+            (Some(old_data), Some(data)) => {
+                if old_data.cursor.get_mode() != data.cursor.get_mode() {
+                    ctx.request_paint();
+                }
+            }
+            (None, None) => (),
+            _ => ctx.request_paint(),
         }
 
         if old_data.main_split.warning_count != data.main_split.warning_count
@@ -234,7 +231,10 @@ impl Widget<LapceTabData> for LapceStatusNew {
                             .unwrap()
                             .mode
                     } else {
-                        data.main_split.active_editor().cursor.get_mode()
+                        data.main_split
+                            .active_editor()
+                            .map(|e| e.cursor.get_mode())
+                            .unwrap_or(Mode::Normal)
                     };
                 match mode {
                     Mode::Normal => ("Normal", Color::rgb8(64, 120, 242)),

@@ -8,18 +8,21 @@ use std::{
 use directories::ProjectDirs;
 use druid::{
     kurbo::Line,
-    piet::{Text, TextLayout, TextLayoutBuilder},
+    piet::{PietTextLayout, Text, TextLayout, TextLayoutBuilder},
     theme, Application, BoxConstraints, Color, Command, Cursor, Data, Env, Event,
-    EventCtx, FontFamily, Insets, LayoutCtx, LifeCycle, LifeCycleCtx, PaintCtx,
-    Point, Rect, RenderContext, Size, Target, Vec2, Widget, WidgetExt, WidgetId,
-    WidgetPod, WindowConfig,
+    EventCtx, FontFamily, Insets, InternalLifeCycle, LayoutCtx, LifeCycle,
+    LifeCycleCtx, PaintCtx, Point, Rect, RenderContext, Size, Target, Vec2, Widget,
+    WidgetExt, WidgetId, WidgetPod, WindowConfig,
 };
 use itertools::Itertools;
 use lsp_types::{CallHierarchyOptions, DiagnosticSeverity};
 
 use crate::{
     activity::ActivityBar,
-    buffer::{BufferId, BufferNew, BufferState, BufferUpdate, UpdateEvent},
+    buffer::{
+        BufferContent, BufferId, BufferNew, BufferState, BufferUpdate,
+        LocalBufferKind, UpdateEvent,
+    },
     code_action::CodeAction,
     command::{
         LapceCommand, LapceUICommand, LAPCE_COMMAND, LAPCE_NEW_COMMAND,
@@ -28,17 +31,18 @@ use crate::{
     completion::{CompletionContainer, CompletionNew, CompletionStatus},
     config::{Config, LapceTheme},
     data::{
-        EditorContent, EditorDiagnostic, EditorKind, EditorType, LapceMainSplitData,
-        LapceTabData, WorkProgress,
+        DragContent, EditorContent, EditorDiagnostic, EditorTabChild,
+        LapceMainSplitData, LapceTabData, PanelKind, SplitContent, WorkProgress,
     },
-    editor::{EditorLocationNew, LapceEditorView},
+    editor::{EditorLocationNew, LapceEditorTab, LapceEditorView},
     explorer::FileExplorer,
+    menu::Menu,
     movement::{self, CursorMode, Selection},
     palette::{NewPalette, PaletteViewLens},
-    panel::{PanelPosition, PanelResizePosition},
+    panel::{PanelHeaderKind, PanelPosition, PanelResizePosition},
+    picker::FilePicker,
     plugin::Plugin,
     scroll::LapceScrollNew,
-    source_control::SourceControlNew,
     split::LapceSplitNew,
     state::{LapceWorkspace, LapceWorkspaceType},
     status::LapceStatusNew,
@@ -51,6 +55,12 @@ pub struct LapceIcon {
     pub icon: String,
 }
 
+pub struct LapceButton {
+    pub rect: Rect,
+    pub command: Command,
+    pub text_layout: PietTextLayout,
+}
+
 pub struct LapceTabNew {
     id: WidgetId,
     activity: WidgetPod<LapceTabData, ActivityBar>,
@@ -59,25 +69,25 @@ pub struct LapceTabNew {
     palette: WidgetPod<LapceTabData, Box<dyn Widget<LapceTabData>>>,
     code_action: WidgetPod<LapceTabData, Box<dyn Widget<LapceTabData>>>,
     status: WidgetPod<LapceTabData, Box<dyn Widget<LapceTabData>>>,
+    picker: WidgetPod<LapceTabData, Box<dyn Widget<LapceTabData>>>,
     panels:
-        HashMap<WidgetId, WidgetPod<LapceTabData, Box<dyn Widget<LapceTabData>>>>,
+        HashMap<PanelKind, WidgetPod<LapceTabData, Box<dyn Widget<LapceTabData>>>>,
     current_bar_hover: Option<PanelResizePosition>,
     height: f64,
     main_split_height: f64,
     status_height: f64,
+    mouse_pos: Point,
 }
 
 impl LapceTabNew {
     pub fn new(data: &LapceTabData) -> Self {
-        let mut main_split = LapceSplitNew::new(*data.main_split.split_id);
-        for view_id in data.main_split.editors_order.iter() {
-            let editor = data.main_split.editors.get(view_id).unwrap();
-            main_split = main_split.with_flex_child(
-                LapceEditorView::new(editor).boxed(),
-                Some(editor.view_id),
-                1.0,
-            );
-        }
+        let split_data = data
+            .main_split
+            .splits
+            .get(&*data.main_split.split_id)
+            .unwrap();
+        let main_split = split_data.widget(data);
+
         let activity = ActivityBar::new();
         let completion = CompletionContainer::new(&data.completion);
         let palette = NewPalette::new(
@@ -93,24 +103,29 @@ impl LapceTabNew {
         let mut panels = HashMap::new();
         let file_explorer = FileExplorer::new(&data.file_explorer);
         panels.insert(
-            data.file_explorer.widget_id,
+            PanelKind::FileExplorer,
             WidgetPod::new(file_explorer.boxed()),
         );
 
-        let source_control = SourceControlNew::new(&data);
+        let source_control = data.source_control.new_panel(&data);
         panels.insert(
-            data.source_control.widget_id,
+            PanelKind::SourceControl,
             WidgetPod::new(source_control.boxed()),
         );
 
         let plugin = Plugin::new();
-        panels.insert(data.plugin.widget_id, WidgetPod::new(plugin.boxed()));
+        panels.insert(PanelKind::Plugin, WidgetPod::new(plugin.boxed()));
 
         let terminal = TerminalPanel::new(&data);
-        panels.insert(data.terminal.widget_id, WidgetPod::new(terminal.boxed()));
+        panels.insert(PanelKind::Terminal, WidgetPod::new(terminal.boxed()));
+
+        let search = data.search.new_panel(&data);
+        panels.insert(PanelKind::Search, WidgetPod::new(search.boxed()));
 
         let problem = data.problem.new_panel();
-        panels.insert(data.problem.widget_id, WidgetPod::new(problem.boxed()));
+        panels.insert(PanelKind::Problem, WidgetPod::new(problem.boxed()));
+
+        let picker = FilePicker::new(data);
 
         Self {
             id: data.id,
@@ -118,6 +133,7 @@ impl LapceTabNew {
             main_split: WidgetPod::new(main_split.boxed()),
             completion: WidgetPod::new(completion.boxed()),
             code_action: WidgetPod::new(code_action.boxed()),
+            picker: WidgetPod::new(picker.boxed()),
             palette: WidgetPod::new(palette.boxed()),
             status: WidgetPod::new(status.boxed()),
             panels,
@@ -125,6 +141,7 @@ impl LapceTabNew {
             height: 0.0,
             main_split_height: 0.0,
             status_height: 0.0,
+            mouse_pos: Point::ZERO,
         }
     }
 
@@ -190,6 +207,49 @@ impl LapceTabNew {
 
         None
     }
+
+    fn paint_drag(&self, ctx: &mut PaintCtx, data: &LapceTabData) {
+        if let Some((offset, drag_content)) = data.drag.as_ref() {
+            match drag_content {
+                DragContent::EditorTab(_, _, _, tab_rect) => {
+                    let rect = tab_rect.rect.with_origin(self.mouse_pos - *offset);
+                    let size = rect.size();
+                    let shadow_width = 5.0;
+                    ctx.blurred_rect(
+                        rect,
+                        shadow_width,
+                        data.config
+                            .get_color_unchecked(LapceTheme::LAPCE_DROPDOWN_SHADOW),
+                    );
+                    ctx.fill(
+                        rect,
+                        &data
+                            .config
+                            .get_color_unchecked(LapceTheme::EDITOR_BACKGROUND)
+                            .clone()
+                            .with_alpha(0.6),
+                    );
+
+                    let width = 13.0;
+                    let height = 13.0;
+                    let svg_rect =
+                        Size::new(width, height).to_rect().with_origin(Point::new(
+                            rect.x0 + (size.height - width) / 2.0,
+                            rect.y0 + (size.height - height) / 2.0,
+                        ));
+                    ctx.draw_svg(&tab_rect.svg, svg_rect, None);
+                    let text_size = tab_rect.text_layout.size();
+                    ctx.draw_text(
+                        &tab_rect.text_layout,
+                        Point::new(
+                            rect.x0 + size.height,
+                            rect.y0 + (size.height - text_size.height) / 2.0,
+                        ),
+                    );
+                }
+            }
+        }
+    }
 }
 
 impl Widget<LapceTabData> for LapceTabNew {
@@ -220,6 +280,7 @@ impl Widget<LapceTabData> for LapceTabNew {
                 }
             }
             Event::MouseMove(mouse) => {
+                self.mouse_pos = mouse.pos;
                 if ctx.is_active() {
                     self.update_split_point(data, mouse.pos);
                     ctx.request_layout();
@@ -252,10 +313,8 @@ impl Widget<LapceTabData> for LapceTabNew {
                         ctx.set_handled();
                     }
                     LapceUICommand::UpdateWindowOrigin => {
-                        let window_origin = ctx.window_origin();
-                        if data.window_origin != window_origin {
-                            data.window_origin = window_origin;
-                        }
+                        data.window_origin = ctx.window_origin();
+                        ctx.set_handled();
                     }
                     LapceUICommand::LoadBuffer {
                         path,
@@ -268,11 +327,37 @@ impl Widget<LapceTabData> for LapceTabNew {
                         for (view_id, location) in locations {
                             data.main_split.go_to_location(
                                 ctx,
-                                *view_id,
+                                Some(*view_id),
                                 location.clone(),
                                 &data.config,
                             );
                         }
+                        ctx.set_handled();
+                    }
+                    LapceUICommand::UpdateSearch(pattern) => {
+                        if pattern == "" {
+                            Arc::make_mut(&mut data.find).unset();
+                        } else {
+                            Arc::make_mut(&mut data.find)
+                                .set_find(pattern, false, false, false);
+                        }
+                    }
+                    LapceUICommand::GlobalSearchResult(pattern, matches) => {
+                        let buffer = data
+                            .main_split
+                            .local_buffers
+                            .get(&LocalBufferKind::Search)
+                            .unwrap();
+                        if &buffer.rope.to_string() == pattern {
+                            Arc::make_mut(&mut data.search).matches =
+                                matches.clone();
+                        }
+                    }
+                    LapceUICommand::LoadBufferHead { path, id, content } => {
+                        let buffer =
+                            data.main_split.open_files.get_mut(path).unwrap();
+                        let buffer = Arc::make_mut(buffer);
+                        buffer.load_history(id, content.clone());
                         ctx.set_handled();
                     }
                     LapceUICommand::UpdateTerminalTitle(term_id, title) => {
@@ -283,6 +368,19 @@ impl Widget<LapceTabData> for LapceTabNew {
                             Arc::make_mut(&mut terminal).title = title.to_string();
                         }
                     }
+                    LapceUICommand::CancelFilePicker => {
+                        Arc::make_mut(&mut data.picker).active = false;
+                        ctx.set_handled();
+                    }
+                    LapceUICommand::ProxyUpdateStatus(status) => {
+                        data.proxy_status = Arc::new(*status);
+                        ctx.set_handled();
+                    }
+                    LapceUICommand::HomeDir(path) => {
+                        Arc::make_mut(&mut data.picker).init_home(path);
+                        data.set_picker_pwd(path.clone());
+                        ctx.set_handled();
+                    }
                     LapceUICommand::CloseTerminal(id) => {
                         let terminal_panel = Arc::make_mut(&mut data.terminal);
                         if let Some(terminal) = terminal_panel.terminals.get_mut(id)
@@ -292,7 +390,6 @@ impl Widget<LapceTabData> for LapceTabNew {
                                 LapceUICommand::SplitTerminalClose(
                                     terminal.term_id,
                                     terminal.widget_id,
-                                    terminal.panel_widget_id.clone(),
                                 ),
                                 Target::Widget(terminal.split_id),
                             ));
@@ -303,21 +400,32 @@ impl Widget<LapceTabData> for LapceTabNew {
                     LapceUICommand::UpdateInstalledPlugins(plugins) => {
                         data.installed_plugins = Arc::new(plugins.to_owned());
                     }
-                    LapceUICommand::UpdateDiffFiles(files) => {
+                    LapceUICommand::UpdateDiffInfo(diff) => {
                         let source_control = Arc::make_mut(&mut data.source_control);
-                        source_control.diff_files = files
+                        source_control.branch = diff.head.to_string();
+                        source_control.branches = diff.branches.clone();
+                        source_control.file_diffs = diff
+                            .diffs
                             .iter()
-                            .map(|path| {
+                            .map(|diff| {
                                 let mut checked = true;
-                                for (p, c) in source_control.diff_files.iter() {
-                                    if p == path {
+                                for (p, c) in source_control.file_diffs.iter() {
+                                    if p == diff {
                                         checked = *c;
                                         break;
                                     }
                                 }
-                                (path.clone(), checked)
+                                (diff.clone(), checked)
                             })
                             .collect();
+
+                        for (path, buffer) in data.main_split.open_files.iter() {
+                            buffer.retrieve_file_head(
+                                data.id,
+                                data.proxy.clone(),
+                                ctx.get_external_handle(),
+                            );
+                        }
                         ctx.set_handled();
                     }
                     LapceUICommand::WorkDoneProgress(params) => {
@@ -418,21 +526,41 @@ impl Widget<LapceTabData> for LapceTabNew {
                         Arc::make_mut(buffer).load_content(content);
                         data.main_split.go_to_location(
                             ctx,
-                            *editor_view_id,
+                            Some(*editor_view_id),
                             location.clone(),
                             &data.config,
                         );
                         ctx.set_handled();
                     }
-                    LapceUICommand::OpenFile(path) => {
+                    LapceUICommand::OpenFileDiff(path, history) => {
                         let editor_view_id = data.main_split.active.clone();
-                        data.main_split.jump_to_location(
+                        let editor_view_id = data.main_split.jump_to_location(
                             ctx,
                             *editor_view_id,
                             EditorLocationNew {
                                 path: path.clone(),
                                 position: None,
                                 scroll_offset: None,
+                                hisotry: Some(history.to_string()),
+                            },
+                            &data.config,
+                        );
+                        ctx.submit_command(Command::new(
+                            LAPCE_UI_COMMAND,
+                            LapceUICommand::Focus,
+                            Target::Widget(editor_view_id),
+                        ));
+                        ctx.set_handled();
+                    }
+                    LapceUICommand::OpenFile(path) => {
+                        data.main_split.jump_to_location(
+                            ctx,
+                            None,
+                            EditorLocationNew {
+                                path: path.clone(),
+                                position: None,
+                                scroll_offset: None,
+                                hisotry: None,
                             },
                             &data.config,
                         );
@@ -441,40 +569,34 @@ impl Widget<LapceTabData> for LapceTabNew {
                     LapceUICommand::GoToLocationNew(editor_view_id, location) => {
                         data.main_split.go_to_location(
                             ctx,
+                            Some(*editor_view_id),
+                            location.clone(),
+                            &data.config,
+                        );
+                        ctx.set_handled();
+                    }
+                    LapceUICommand::JumpToPosition(editor_view_id, position) => {
+                        data.main_split.jump_to_position(
+                            ctx,
+                            *editor_view_id,
+                            *position,
+                            &data.config,
+                        );
+                        ctx.set_handled();
+                    }
+                    LapceUICommand::JumpToLocation(editor_view_id, location) => {
+                        data.main_split.jump_to_location(
+                            ctx,
                             *editor_view_id,
                             location.clone(),
                             &data.config,
                         );
                         ctx.set_handled();
                     }
-                    LapceUICommand::JumpToPosition(kind, position) => {
-                        let editor_view_id =
-                            data.main_split.editor_kind(kind).view_id;
-                        data.main_split.jump_to_position(
-                            ctx,
-                            editor_view_id,
-                            *position,
-                            &data.config,
-                        );
-                        ctx.set_handled();
-                    }
-                    LapceUICommand::JumpToLocation(kind, location) => {
-                        let editor_view_id =
-                            data.main_split.editor_kind(kind).view_id;
-                        data.main_split.jump_to_location(
-                            ctx,
-                            editor_view_id,
-                            location.clone(),
-                            &data.config,
-                        );
-                        ctx.set_handled();
-                    }
-                    LapceUICommand::JumpToLine(kind, line) => {
-                        let editor_view_id =
-                            data.main_split.editor_kind(kind).view_id;
+                    LapceUICommand::JumpToLine(editor_view_id, line) => {
                         data.main_split.jump_to_line(
                             ctx,
-                            editor_view_id,
+                            *editor_view_id,
                             *line,
                             &data.config,
                         );
@@ -505,14 +627,17 @@ impl Widget<LapceTabData> for LapceTabNew {
                         offset,
                         location,
                     ) => {
-                        if *offset == data.main_split.active_editor().cursor.offset()
-                        {
-                            data.main_split.jump_to_location(
-                                ctx,
-                                *editor_view_id,
-                                location.clone(),
-                                &data.config,
-                            );
+                        if let Some(editor) = data.main_split.active_editor() {
+                            if *editor_view_id == editor.view_id
+                                && *offset == editor.cursor.offset()
+                            {
+                                data.main_split.jump_to_location(
+                                    ctx,
+                                    None,
+                                    location.clone(),
+                                    &data.config,
+                                );
+                            }
                         }
                         ctx.set_handled();
                     }
@@ -521,14 +646,17 @@ impl Widget<LapceTabData> for LapceTabNew {
                         offset,
                         location,
                     ) => {
-                        if *offset == data.main_split.active_editor().cursor.offset()
-                        {
-                            data.main_split.jump_to_location(
-                                ctx,
-                                *editor_view_id,
-                                location.clone(),
-                                &data.config,
-                            );
+                        if let Some(editor) = data.main_split.active_editor() {
+                            if *editor_view_id == editor.view_id
+                                && *offset == editor.cursor.offset()
+                            {
+                                data.main_split.jump_to_location(
+                                    ctx,
+                                    Some(*editor_view_id),
+                                    location.clone(),
+                                    &data.config,
+                                );
+                            }
                         }
                         ctx.set_handled();
                     }
@@ -544,21 +672,23 @@ impl Widget<LapceTabData> for LapceTabNew {
                         }
                     }
                     LapceUICommand::PaletteReferences(offset, locations) => {
-                        if *offset == data.main_split.active_editor().cursor.offset()
-                        {
-                            let locations = locations
-                                .iter()
-                                .map(|l| EditorLocationNew {
-                                    path: PathBuf::from(l.uri.path()),
-                                    position: Some(l.range.start.clone()),
-                                    scroll_offset: None,
-                                })
-                                .collect();
-                            ctx.submit_command(Command::new(
-                                LAPCE_UI_COMMAND,
-                                LapceUICommand::RunPaletteReferences(locations),
-                                Target::Widget(data.palette.widget_id),
-                            ));
+                        if let Some(editor) = data.main_split.active_editor() {
+                            if *offset == editor.cursor.offset() {
+                                let locations = locations
+                                    .iter()
+                                    .map(|l| EditorLocationNew {
+                                        path: PathBuf::from(l.uri.path()),
+                                        position: Some(l.range.start.clone()),
+                                        scroll_offset: None,
+                                        hisotry: None,
+                                    })
+                                    .collect();
+                                ctx.submit_command(Command::new(
+                                    LAPCE_UI_COMMAND,
+                                    LapceUICommand::RunPaletteReferences(locations),
+                                    Target::Widget(data.palette.widget_id),
+                                ));
+                            }
                         }
                         ctx.set_handled();
                     }
@@ -573,43 +703,32 @@ impl Widget<LapceTabData> for LapceTabNew {
                                     for (_, editor) in
                                         data.main_split.editors.iter_mut()
                                     {
-                                        match &editor.content {
-                                            EditorContent::Buffer(path) => {
-                                                if path == &buffer.path {
-                                                    if editor.cursor.offset()
-                                                        >= buffer.len()
-                                                    {
-                                                        let editor =
-                                                            Arc::make_mut(editor);
-                                                        if data.config.lapce.modal {
-                                                            editor.cursor =
-                                                                movement::Cursor::new(CursorMode::Normal(buffer.len() - 1), None);
-                                                        } else {
-                                                            editor.cursor =
-                                                                movement::Cursor::new(CursorMode::Insert(Selection::caret(buffer.len() - 1)), None);
-                                                        }
-                                                    }
+                                        if editor.content == buffer.content {
+                                            if editor.cursor.offset() >= buffer.len()
+                                            {
+                                                let editor = Arc::make_mut(editor);
+                                                if data.config.lapce.modal {
+                                                    editor.cursor =
+                                                        movement::Cursor::new(
+                                                            CursorMode::Normal(
+                                                                buffer.len() - 1,
+                                                            ),
+                                                            None,
+                                                        );
+                                                } else {
+                                                    editor.cursor =
+                                                        movement::Cursor::new(
+                                                            CursorMode::Insert(
+                                                                Selection::caret(
+                                                                    buffer.len() - 1,
+                                                                ),
+                                                            ),
+                                                            None,
+                                                        );
                                                 }
                                             }
-                                            EditorContent::None => {}
                                         }
                                     }
-                                }
-                                break;
-                            }
-                        }
-                        ctx.set_handled();
-                    }
-                    LapceUICommand::UpdateBufferLineChanges(
-                        id,
-                        rev,
-                        line_changes,
-                    ) => {
-                        for (_, buffer) in data.main_split.open_files.iter_mut() {
-                            if &buffer.id == id {
-                                if buffer.rev == *rev {
-                                    let buffer = Arc::make_mut(buffer);
-                                    buffer.line_changes = line_changes.to_owned();
                                 }
                                 break;
                             }
@@ -621,20 +740,22 @@ impl Widget<LapceTabData> for LapceTabNew {
                             data.main_split.open_files.get_mut(path).unwrap();
                         if buffer.rev == *rev {
                             if let Some(language) = buffer.language.as_ref() {
-                                data.update_sender.send(
-                                    UpdateEvent::SemanticTokens(
-                                        BufferUpdate {
-                                            id: buffer.id,
-                                            path: buffer.path.clone(),
-                                            rope: buffer.rope.clone(),
-                                            rev: *rev,
-                                            language: *language,
-                                            highlights: buffer.styles.clone(),
-                                            semantic_tokens: true,
-                                        },
-                                        tokens.to_owned(),
-                                    ),
-                                );
+                                if let BufferContent::File(path) = &buffer.content {
+                                    data.update_sender.send(
+                                        UpdateEvent::SemanticTokens(
+                                            BufferUpdate {
+                                                id: buffer.id,
+                                                path: path.clone(),
+                                                rope: buffer.rope.clone(),
+                                                rev: *rev,
+                                                language: *language,
+                                                highlights: buffer.styles.clone(),
+                                                semantic_tokens: true,
+                                            },
+                                            tokens.to_owned(),
+                                        ),
+                                    );
+                                }
                             }
                         }
                         ctx.set_handled();
@@ -646,11 +767,11 @@ impl Widget<LapceTabData> for LapceTabNew {
                     LapceUICommand::Focus => {
                         let dir = data
                             .workspace
+                            .path
                             .as_ref()
-                            .map(|w| {
-                                let dir =
-                                    w.path.file_name().unwrap().to_str().unwrap();
-                                let dir = match &w.kind {
+                            .map(|p| {
+                                let dir = p.file_name().unwrap().to_str().unwrap();
+                                let dir = match &data.workspace.kind {
                                     LapceWorkspaceType::Local => dir.to_string(),
                                     LapceWorkspaceType::RemoteSSH(user, host) => {
                                         format!("{} [{}@{}]", dir, user, host)
@@ -685,15 +806,15 @@ impl Widget<LapceTabData> for LapceTabNew {
                     }
                     LapceUICommand::FocusSourceControl => {
                         for (_, panel) in data.panels.iter_mut() {
-                            for (widget_id, kind) in panel.widgets.clone() {
-                                if widget_id == data.source_control.widget_id {
+                            for kind in panel.widgets.clone() {
+                                if kind == PanelKind::SourceControl {
                                     let panel = Arc::make_mut(panel);
-                                    panel.active = widget_id;
+                                    panel.active = PanelKind::SourceControl;
                                     panel.shown = true;
                                     ctx.submit_command(Command::new(
                                         LAPCE_UI_COMMAND,
                                         LapceUICommand::Focus,
-                                        Target::Widget(widget_id),
+                                        Target::Widget(data.source_control.active),
                                     ));
                                 }
                             }
@@ -701,11 +822,13 @@ impl Widget<LapceTabData> for LapceTabNew {
                         ctx.set_handled();
                     }
                     LapceUICommand::FocusEditor => {
-                        ctx.submit_command(Command::new(
-                            LAPCE_UI_COMMAND,
-                            LapceUICommand::Focus,
-                            Target::Widget(*data.main_split.active),
-                        ));
+                        if let Some(active) = *data.main_split.active {
+                            ctx.submit_command(Command::new(
+                                LAPCE_UI_COMMAND,
+                                LapceUICommand::Focus,
+                                Target::Widget(active),
+                            ));
+                        }
                         ctx.set_handled();
                     }
                     LapceUICommand::UpdateSyntaxTree {
@@ -718,6 +841,50 @@ impl Widget<LapceTabData> for LapceTabNew {
                             data.main_split.open_files.get_mut(path).unwrap();
                         Arc::make_mut(buffer)
                             .update_syntax_tree(*rev, tree.to_owned());
+                        ctx.set_handled();
+                    }
+                    LapceUICommand::UpdateHisotryChanges {
+                        id,
+                        path,
+                        rev,
+                        history,
+                        changes,
+                    } => {
+                        ctx.set_handled();
+                        let buffer =
+                            data.main_split.open_files.get_mut(path).unwrap();
+                        Arc::make_mut(buffer).update_history_changes(
+                            *rev,
+                            history,
+                            changes.clone(),
+                        );
+                    }
+                    LapceUICommand::UpdateHistoryStyle {
+                        id,
+                        path,
+                        history,
+                        highlights,
+                    } => {
+                        ctx.set_handled();
+                        let buffer =
+                            data.main_split.open_files.get_mut(path).unwrap();
+                        Arc::make_mut(buffer).history_styles.insert(
+                            history.to_string(),
+                            Arc::new(highlights.to_owned()),
+                        );
+                        buffer
+                            .history_line_styles
+                            .borrow_mut()
+                            .insert(history.to_string(), HashMap::new());
+                    }
+                    LapceUICommand::UpdatePickerPwd(path) => {
+                        Arc::make_mut(&mut data.picker).pwd = path.clone();
+                        data.read_picker_pwd(ctx);
+                        ctx.set_handled();
+                    }
+                    LapceUICommand::UpdatePickerItems(path, items) => {
+                        Arc::make_mut(&mut data.picker)
+                            .set_item_children(path, items.clone());
                         ctx.set_handled();
                     }
                     LapceUICommand::UpdateExplorerItems(index, path, items) => {
@@ -743,6 +910,7 @@ impl Widget<LapceTabData> for LapceTabNew {
             }
             _ => (),
         }
+        self.picker.event(ctx, event, data, env);
         self.palette.event(ctx, event, data, env);
         self.completion.event(ctx, event, data, env);
         self.code_action.event(ctx, event, data, env);
@@ -757,6 +925,15 @@ impl Widget<LapceTabData> for LapceTabNew {
             }
         }
         self.activity.event(ctx, event, data, env);
+
+        match event {
+            Event::MouseUp(_) => {
+                if data.drag.is_some() {
+                    *Arc::make_mut(&mut data.drag) = None;
+                }
+            }
+            _ => (),
+        }
     }
 
     fn lifecycle(
@@ -767,24 +944,24 @@ impl Widget<LapceTabData> for LapceTabNew {
         env: &Env,
     ) {
         match event {
-            LifeCycle::WidgetAdded => {
-                data.proxy.start(
-                    data.workspace
-                        .clone()
-                        .map(|w| (*w).clone())
-                        .unwrap_or(LapceWorkspace::default()),
-                    ctx.get_external_handle(),
-                );
+            LifeCycle::Internal(InternalLifeCycle::ParentWindowOrigin) => {
+                if ctx.window_origin() != data.window_origin {
+                    ctx.submit_command(Command::new(
+                        LAPCE_UI_COMMAND,
+                        LapceUICommand::UpdateWindowOrigin,
+                        Target::Widget(data.id),
+                    ))
+                }
             }
-            _ => {}
+            _ => (),
         }
-
         self.palette.lifecycle(ctx, event, data, env);
         self.activity.lifecycle(ctx, event, data, env);
         self.main_split.lifecycle(ctx, event, data, env);
         self.code_action.lifecycle(ctx, event, data, env);
         self.status.lifecycle(ctx, event, data, env);
         self.completion.lifecycle(ctx, event, data, env);
+        self.picker.lifecycle(ctx, event, data, env);
 
         for (_, panel) in self.panels.iter_mut() {
             panel.lifecycle(ctx, event, data, env);
@@ -799,6 +976,10 @@ impl Widget<LapceTabData> for LapceTabNew {
         env: &Env,
     ) {
         if old_data.focus != data.focus {
+            ctx.request_paint();
+        }
+
+        if !old_data.drag.same(&data.drag) {
             ctx.request_paint();
         }
 
@@ -824,6 +1005,7 @@ impl Widget<LapceTabData> for LapceTabNew {
         self.completion.update(ctx, data, env);
         self.code_action.update(ctx, data, env);
         self.status.update(ctx, data, env);
+        self.picker.update(ctx, data, env);
         for (_, panel) in data.panels.iter() {
             if panel.is_shown() {
                 self.panels
@@ -1078,13 +1260,15 @@ impl Widget<LapceTabData> for LapceTabNew {
             self_size.height - status_size.height - panel_bottom_height,
         );
         let main_split_bc = BoxConstraints::tight(main_split_size);
-        self.main_split.layout(ctx, &main_split_bc, data, env);
-        self.main_split.set_origin(
-            ctx,
-            data,
-            env,
-            Point::new(panel_left_width + activity_size.width, 0.0),
+        let main_split_origin =
+            Point::new(panel_left_width + activity_size.width, 0.0);
+        data.main_split.update_split_layout_rect(
+            *data.main_split.split_id,
+            main_split_size.to_rect().with_origin(main_split_origin),
         );
+        self.main_split.layout(ctx, &main_split_bc, data, env);
+        self.main_split
+            .set_origin(ctx, data, env, main_split_origin);
         self.main_split_height = main_split_size.height;
 
         let completion_origin =
@@ -1105,6 +1289,17 @@ impl Widget<LapceTabData> for LapceTabNew {
             data,
             env,
             Point::new((self_size.width - palette_size.width) / 2.0, 0.0),
+        );
+
+        let picker_size = self.picker.layout(ctx, bc, data, env);
+        self.picker.set_origin(
+            ctx,
+            data,
+            env,
+            Point::new(
+                (self_size.width - picker_size.width) / 2.0,
+                (self_size.height - picker_size.height) / 3.0,
+            ),
         );
 
         self_size
@@ -1176,6 +1371,9 @@ impl Widget<LapceTabData> for LapceTabNew {
         self.completion.paint(ctx, data, env);
         self.code_action.paint(ctx, data, env);
         self.palette.paint(ctx, data, env);
+        self.picker.paint(ctx, data, env);
+
+        self.paint_drag(ctx, data);
     }
 }
 
@@ -1296,10 +1494,11 @@ impl Widget<LapceTabData> for LapceTabHeader {
     fn paint(&mut self, ctx: &mut PaintCtx, data: &LapceTabData, env: &Env) {
         let dir = data
             .workspace
+            .path
             .as_ref()
-            .map(|w| {
-                let dir = w.path.file_name().unwrap().to_str().unwrap();
-                let dir = match &w.kind {
+            .map(|p| {
+                let dir = p.file_name().unwrap().to_str().unwrap();
+                let dir = match &data.workspace.kind {
                     LapceWorkspaceType::Local => dir.to_string(),
                     LapceWorkspaceType::RemoteSSH(user, host) => {
                         format!("{} [{}@{}]", dir, user, host)

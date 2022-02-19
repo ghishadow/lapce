@@ -270,7 +270,7 @@ impl KeyPressFocus for LapceTerminalViewData {
     fn check_condition(&self, condition: &str) -> bool {
         match condition {
             "terminal_focus" => true,
-            "panel_focus" => self.terminal.panel_widget_id.is_some(),
+            "panel_focus" => true,
             _ => false,
         }
     }
@@ -392,11 +392,7 @@ impl KeyPressFocus for LapceTerminalViewData {
             LapceCommand::SplitVertical => {
                 ctx.submit_command(Command::new(
                     LAPCE_UI_COMMAND,
-                    LapceUICommand::SplitTerminal(
-                        true,
-                        self.terminal.widget_id,
-                        self.terminal.panel_widget_id.clone(),
-                    ),
+                    LapceUICommand::SplitTerminal(true, self.terminal.widget_id),
                     Target::Widget(self.terminal.split_id),
                 ));
             }
@@ -519,7 +515,6 @@ pub struct LapceTerminalData {
     pub widget_id: WidgetId,
     pub split_id: WidgetId,
     pub title: String,
-    pub panel_widget_id: Option<WidgetId>,
     pub mode: Mode,
     pub visual_mode: VisualMode,
     pub raw: Arc<Mutex<RawTerminal>>,
@@ -528,13 +523,12 @@ pub struct LapceTerminalData {
 
 impl LapceTerminalData {
     pub fn new(
-        workspace: Option<Arc<LapceWorkspace>>,
+        workspace: Arc<LapceWorkspace>,
         split_id: WidgetId,
         event_sink: ExtEventSink,
-        panel_widget_id: Option<WidgetId>,
         proxy: Arc<LapceProxy>,
     ) -> Self {
-        let cwd = workspace.map(|w| w.path.clone());
+        let cwd = workspace.path.as_ref().map(|p| p.clone());
         let widget_id = WidgetId::next();
         let view_id = WidgetId::next();
         let term_id = TermId::next();
@@ -556,7 +550,6 @@ impl LapceTerminalData {
             view_id,
             split_id,
             title: "".to_string(),
-            panel_widget_id,
             mode: Mode::Terminal,
             visual_mode: VisualMode::Normal,
             raw,
@@ -684,6 +677,24 @@ impl Widget<LapceTabData> for TerminalPanel {
         data: &mut LapceTabData,
         env: &Env,
     ) {
+        match event {
+            Event::Command(cmd) if cmd.is(LAPCE_UI_COMMAND) => {
+                let command = cmd.get_unchecked(LAPCE_UI_COMMAND);
+                match command {
+                    LapceUICommand::Focus => {
+                        if data.terminal.terminals.len() > 0 {
+                            ctx.submit_command(Command::new(
+                                LAPCE_UI_COMMAND,
+                                LapceUICommand::Focus,
+                                Target::Widget(data.terminal.active),
+                            ));
+                        }
+                    }
+                    _ => (),
+                }
+            }
+            _ => (),
+        }
         self.split.event(ctx, event, data, env);
     }
 
@@ -707,7 +718,7 @@ impl Widget<LapceTabData> for TerminalPanel {
         if data.terminal.terminals.len() == 0 {
             ctx.submit_command(Command::new(
                 LAPCE_UI_COMMAND,
-                LapceUICommand::InitTerminalPanel(false),
+                LapceUICommand::InitTerminalPanel(true),
                 Target::Widget(data.terminal.split_id),
             ));
         }
@@ -895,11 +906,7 @@ impl LapceTerminalHeader {
                 .with_origin(Point::new(x, gap)),
             command: Command::new(
                 LAPCE_UI_COMMAND,
-                LapceUICommand::SplitTerminal(
-                    true,
-                    terminal_data.widget_id,
-                    terminal_data.panel_widget_id.clone(),
-                ),
+                LapceUICommand::SplitTerminal(true, terminal_data.widget_id),
                 Target::Widget(terminal_data.split_id),
             ),
         };
@@ -1071,19 +1078,11 @@ impl LapceTerminal {
         Arc::make_mut(&mut data.terminal).active_term_id = self.term_id;
         data.focus = self.widget_id;
         data.focus_area = FocusArea::Panel(PanelKind::Terminal);
-        let terminal = data.terminal.terminals.get(&self.term_id).unwrap();
-        if let Some(widget_panel_id) = terminal.panel_widget_id.as_ref() {
-            for (pos, panel) in data.panels.iter_mut() {
-                if panel
-                    .widgets
-                    .iter()
-                    .map(|(id, _)| *id)
-                    .contains(widget_panel_id)
-                {
-                    Arc::make_mut(panel).active = *widget_panel_id;
-                    data.panel_active = pos.clone();
-                    break;
-                }
+        for (pos, panel) in data.panels.iter_mut() {
+            if panel.widgets.contains(&PanelKind::Terminal) {
+                Arc::make_mut(panel).active = PanelKind::Terminal;
+                data.panel_active = pos.clone();
+                break;
             }
         }
     }
@@ -1462,7 +1461,6 @@ impl EventListener for EventProxy {
     fn send_event(&self, event: alacritty_terminal::event::Event) {
         match event {
             alacritty_terminal::event::Event::PtyWrite(s) => {
-                println!("pyt write {}", s);
                 self.proxy.terminal_write(self.term_id, &s);
             }
             alacritty_terminal::event::Event::Title(title) => {

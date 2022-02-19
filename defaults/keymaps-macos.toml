@@ -22,10 +22,6 @@ key = "meta+,"
 command = "open_settings"
 
 [[keymaps]]
-key = "meta+1"
-command = "toggle_terminal"
-
-[[keymaps]]
 key = "meta+u"
 command = "toggle_maximized_panel"
 when = "panel_focus"
@@ -197,6 +193,11 @@ mode = "ivt"
 [[keymaps]]
 key = "enter"
 command = "insert_new_line"
+mode = "i"
+
+[[keymaps]]
+key = "tab"
+command = "insert_tab"
 mode = "i"
 
 [[keymaps]]
@@ -553,6 +554,16 @@ mode = "n"
 [[keymaps]]
 key = "ctrl+w k"
 command = "split_up"
+mode = "n"
+
+[[keymaps]]
+key = "ctrl+w s"
+command = "split_horizontal"
+mode = "n"
+
+[[keymaps]]
+key = "ctrl+w v"
+command = "split_vertical"
 mode = "n"
 
 [[keymaps]]

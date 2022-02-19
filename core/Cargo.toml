@@ -1,10 +1,13 @@
 [package]
 name = "lapce-core"
-version = "0.0.5"
+version = "0.0.8"
 authors = ["Dongdong Zhou <dzhou121@gmail.com>"]
 edition = "2021"
 
 [dependencies]
+rayon = "1.5.1"
+diff = "0.1.12"
+libloading = "0.7"
 flate2 = "1.0.22"
 reqwest = { version = "0.11", features = ["blocking", "json"] }
 hashbrown = "0.11.2"
@@ -27,28 +30,31 @@ jsonrpc-lite = "0.5.0"
 bit-vec = "0.5.0"
 parking_lot = { version = "0.11.0", features = ["deadlock_detection"] }
 include_dir = "0.6.0"
-tree-sitter = "=0.19.2"
-tree-sitter-rust = "0.19.0"
-tree-sitter-highlight = "0.19.2"
+tree-sitter = "0.20.2"
+tree-sitter-highlight = "0.20.1"
+tree-sitter-rust = "0.20.0"
+tree-sitter-go = "0.19.1"
+tree-sitter-javascript = "0.20.0"
 anyhow = "1.0.32"
 strum = "0.19"
 strum_macros = "0.19"
 lazy_static = "1.4.0"
 serde = "1.0"
 serde_json = "1.0"
-xi-core-lib = "0.3.0"
+notify = "5.0.0-pre.13"
 xi-rope = { git = "https://github.com/lapce/xi-editor", features = ["serde"] }
 xi-unicode = "0.3.0"
-xi-rpc = "0.3.0"
-xi-trace = "0.2.0"
 fzyr = "0.1.2"
 fuzzy-matcher = "0.3.7"
 uuid = { version = "0.7.4", features = ["v4"] }
 lsp-types = { version = "0.89.2", features = ["proposed"] }
-druid = { git = "https://github.com/lapce/druid", features = ["svg", "im"] }
-# druid = { path = "../../druid/druid", features = ["svg", "im"] }
+druid = { git = "https://github.com/lapce/druid", features = ["svg", "im", "serde"] }
+#druid = { path = "../../druid/druid", features = ["svg", "im" , "serde"] }
 toml = { version = "0.5.8", features = ["preserve_order"] }
+lapce-rpc = { path = "../rpc" }
 lapce-proxy = { path = "../proxy" }
 
 [build-dependencies]
-cc = "*"
+cc = "1"
+anyhow = "1.0.32"
+threadpool = "1.0"

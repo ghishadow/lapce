@@ -1,6 +1,6 @@
 use anyhow::{anyhow, Result};
 use home::home_dir;
-use notify::Watcher;
+use hotwatch::Hotwatch;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -23,12 +23,7 @@ use wasmer::WasmerEnv;
 use wasmer_wasi::Pipe;
 use wasmer_wasi::WasiEnv;
 use wasmer_wasi::WasiState;
-use xi_rpc::Handler;
-use xi_rpc::RpcLoop;
-use xi_rpc::RpcPeer;
 
-use crate::buffer::BufferId;
-use crate::core_proxy::CoreProxy;
 use crate::dispatch::Dispatcher;
 
 pub type PluginName = String;
@@ -81,15 +76,6 @@ pub(crate) struct PluginNew {
     env: PluginEnv,
 }
 
-pub struct Plugin {
-    id: PluginId,
-    dispatcher: Dispatcher,
-    configuration: Option<Value>,
-    peer: RpcPeer,
-    name: String,
-    process: Child,
-}
-
 pub struct PluginCatalog {
     id_counter: Counter,
     pub items: HashMap<PluginName, PluginDescription>,
@@ -107,8 +93,12 @@ impl PluginCatalog {
         }
     }
 
+    pub fn stop(&mut self) {
+        self.items.clear();
+        self.plugins.clear();
+    }
+
     pub fn reload(&mut self) {
-        eprintln!("plugin reload from paths");
         self.items.clear();
         self.plugins.clear();
         self.load();
@@ -118,7 +108,7 @@ impl PluginCatalog {
         let all_plugins = find_all_plugins();
         for plugin_path in &all_plugins {
             match load_plugin(plugin_path) {
-                Err(e) => eprintln!("load plugin err {}", e),
+                Err(e) => (),
                 Ok(plugin) => {
                     self.items.insert(plugin.name.clone(), plugin);
                 }
@@ -303,11 +293,9 @@ fn host_handle_notification(plugin_env: &PluginEnv) {
                 )
                 .expect("failed to create file");
                 std::io::copy(&mut resp, &mut out).expect("failed to copy content");
-                eprintln!("donwload file finished");
             }
             PluginNotification::LockFile { path } => {
                 let path = plugin_env.desc.dir.clone().unwrap().join(path);
-                eprintln!("lock file path {:?}", path);
                 let mut n = 0;
                 loop {
                     if let Ok(file) = std::fs::OpenOptions::new()
@@ -321,11 +309,13 @@ fn host_handle_notification(plugin_env: &PluginEnv) {
                         return;
                     }
                     n += 1;
-                    let (tx, rx) = mpsc::channel();
-                    let mut watcher = notify::raw_watcher(tx).unwrap();
-                    watcher.watch(&path, notify::RecursiveMode::NonRecursive);
+                    let mut hotwatch =
+                        Hotwatch::new().expect("hotwatch failed to initialize!");
+                    let (tx, rx) = crossbeam_channel::bounded(1);
+                    hotwatch.watch(&path, move |event| {
+                        tx.send(0);
+                    });
                     rx.recv_timeout(Duration::from_secs(10));
-                    watcher.unwatch(&path);
                 }
             }
             PluginNotification::MakeFileExecutable { path } => {
@@ -372,18 +362,6 @@ pub struct PluginHandler {
     dispatcher: Dispatcher,
 }
 
-impl Plugin {
-    pub fn initialize(&self) {
-        self.peer.send_rpc_notification(
-            "initialize",
-            &json!({
-                "plugin_id": self.id,
-                "configuration": self.configuration,
-            }),
-        )
-    }
-}
-
 fn find_all_plugins() -> Vec<PathBuf> {
     let mut plugin_paths = Vec::new();
     let home = home_dir().unwrap();
@@ -394,7 +372,6 @@ fn find_all_plugins() -> Vec<PathBuf> {
             .filter(|f| f.exists())
             .for_each(|f| plugin_paths.push(f))
     });
-    eprintln!("proxy plugin paths {:?}", plugin_paths);
     plugin_paths
 }
 

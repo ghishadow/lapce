@@ -15,11 +15,11 @@ use crate::{
     },
     command::{LapceCommandNew, LAPCE_UI_COMMAND},
     config::LapceTheme,
-    data::LapceTabData,
+    data::{LapceTabData, PanelKind},
     explorer::FileExplorerState,
     outline::OutlineState,
     scroll::LapceScrollNew,
-    split::LapceSplitNew,
+    split::{LapceSplitNew, SplitDirection},
     svg::get_svg,
     tab::LapceIcon,
 };
@@ -245,24 +245,44 @@ impl Widget<LapceTabData> for LapcePanel {
 
 impl LapcePanel {
     pub fn new(
+        kind: PanelKind,
         widget_id: WidgetId,
         split_id: WidgetId,
+        split_direction: SplitDirection,
         header: PanelHeaderKind,
-        sections: Vec<(WidgetId, PanelHeaderKind, Box<dyn Widget<LapceTabData>>)>,
+        sections: Vec<(
+            WidgetId,
+            PanelHeaderKind,
+            Box<dyn Widget<LapceTabData>>,
+            Option<f64>,
+        )>,
     ) -> Self {
-        let mut split = LapceSplitNew::new(split_id);
-        for (section_widget_id, header, content) in sections {
+        let mut split = LapceSplitNew::new(split_id).direction(split_direction);
+        for (section_widget_id, header, content, size) in sections {
             let header = match header {
-                PanelHeaderKind::simple(s) => PanelSectionHeader::new(s).boxed(),
-                PanelHeaderKind::widget(w) => w,
+                PanelHeaderKind::None => None,
+                PanelHeaderKind::Simple(s) => {
+                    Some(PanelSectionHeader::new(s).boxed())
+                }
+                PanelHeaderKind::Widget(w) => Some(w),
             };
             let section =
                 PanelSection::new(section_widget_id, header, content).boxed();
-            split = split.with_flex_child(section, Some(section_widget_id), 1.0);
+
+            if let Some(size) = size {
+                split = split.with_child(section, Some(section_widget_id), size);
+            } else {
+                split = split.with_flex_child(section, Some(section_widget_id), 1.0);
+            }
         }
         let header = match header {
-            PanelHeaderKind::simple(s) => PanelMainHeader::new(widget_id, s).boxed(),
-            PanelHeaderKind::widget(w) => w,
+            PanelHeaderKind::None => {
+                PanelMainHeader::new(widget_id, kind, "".to_string()).boxed()
+            }
+            PanelHeaderKind::Simple(s) => {
+                PanelMainHeader::new(widget_id, kind, s).boxed()
+            }
+            PanelHeaderKind::Widget(w) => w,
         };
         Self {
             widget_id,
@@ -273,26 +293,27 @@ impl LapcePanel {
 }
 
 pub enum PanelHeaderKind {
-    simple(String),
-    widget(Box<dyn Widget<LapceTabData>>),
+    None,
+    Simple(String),
+    Widget(Box<dyn Widget<LapceTabData>>),
 }
 
 pub struct PanelSection {
     widget_id: WidgetId,
-    header: WidgetPod<LapceTabData, Box<dyn Widget<LapceTabData>>>,
+    header: Option<WidgetPod<LapceTabData, Box<dyn Widget<LapceTabData>>>>,
     content: WidgetPod<LapceTabData, Box<dyn Widget<LapceTabData>>>,
 }
 
 impl PanelSection {
     pub fn new(
         widget_id: WidgetId,
-        header: Box<dyn Widget<LapceTabData>>,
+        header: Option<Box<dyn Widget<LapceTabData>>>,
         content: Box<dyn Widget<LapceTabData>>,
     ) -> Self {
         let content = LapceScrollNew::new(content).vertical().boxed();
         Self {
             widget_id,
-            header: WidgetPod::new(header),
+            header: header.map(|header| WidgetPod::new(header)),
             content: WidgetPod::new(content),
         }
     }
@@ -303,7 +324,7 @@ impl PanelSection {
         content: Box<dyn Widget<LapceTabData>>,
     ) -> Self {
         let header = PanelSectionHeader::new(header).boxed();
-        Self::new(widget_id, header, content)
+        Self::new(widget_id, Some(header), content)
     }
 }
 
@@ -315,7 +336,9 @@ impl Widget<LapceTabData> for PanelSection {
         data: &mut LapceTabData,
         env: &Env,
     ) {
-        self.header.event(ctx, event, data, env);
+        if let Some(header) = self.header.as_mut() {
+            header.event(ctx, event, data, env);
+        }
         self.content.event(ctx, event, data, env);
     }
 
@@ -326,7 +349,9 @@ impl Widget<LapceTabData> for PanelSection {
         data: &LapceTabData,
         env: &Env,
     ) {
-        self.header.lifecycle(ctx, event, data, env);
+        if let Some(header) = self.header.as_mut() {
+            header.lifecycle(ctx, event, data, env);
+        }
         self.content.lifecycle(ctx, event, data, env);
     }
 
@@ -337,7 +362,9 @@ impl Widget<LapceTabData> for PanelSection {
         data: &LapceTabData,
         env: &Env,
     ) {
-        self.header.update(ctx, data, env);
+        if let Some(header) = self.header.as_mut() {
+            header.update(ctx, data, env);
+        }
         self.content.update(ctx, data, env);
     }
 
@@ -349,33 +376,40 @@ impl Widget<LapceTabData> for PanelSection {
         env: &Env,
     ) -> Size {
         let self_size = bc.max();
-        let header_height = 30.0;
-        self.header.layout(
-            ctx,
-            &BoxConstraints::tight(Size::new(self_size.width, header_height)),
-            data,
-            env,
-        );
-        self.header.set_origin(ctx, data, env, Point::ZERO);
+        let header_height = if let Some(header) = self.header.as_mut() {
+            let header_height = 30.0;
+            header.layout(
+                ctx,
+                &BoxConstraints::tight(Size::new(self_size.width, header_height)),
+                data,
+                env,
+            );
+            header.set_origin(ctx, data, env, Point::ZERO);
+            header_height
+        } else {
+            0.0
+        };
 
-        self.content.layout(
+        let content_size = self.content.layout(
             ctx,
-            &BoxConstraints::tight(Size::new(
-                self_size.width,
-                self_size.height - header_height,
-            )),
+            &BoxConstraints::new(
+                Size::ZERO,
+                Size::new(self_size.width, self_size.height - header_height),
+            ),
             data,
             env,
         );
         self.content
             .set_origin(ctx, data, env, Point::new(0.0, header_height));
 
-        self_size
+        Size::new(content_size.width, header_height + content_size.height)
     }
 
     fn paint(&mut self, ctx: &mut PaintCtx, data: &LapceTabData, env: &Env) {
         self.content.paint(ctx, data, env);
-        self.header.paint(ctx, data, env);
+        if let Some(header) = self.header.as_mut() {
+            header.paint(ctx, data, env);
+        }
     }
 }
 
@@ -466,13 +500,15 @@ pub struct PanelMainHeader {
     text: String,
     icons: Vec<LapceIcon>,
     panel_widget_id: WidgetId,
+    kind: PanelKind,
     mouse_pos: Point,
 }
 
 impl PanelMainHeader {
-    pub fn new(panel_widget_id: WidgetId, text: String) -> Self {
+    pub fn new(panel_widget_id: WidgetId, kind: PanelKind, text: String) -> Self {
         Self {
             panel_widget_id,
+            kind,
             text,
             icons: Vec::new(),
             mouse_pos: Point::ZERO,
@@ -494,7 +530,7 @@ impl PanelMainHeader {
                 LAPCE_NEW_COMMAND,
                 LapceCommandNew {
                     cmd: LapceWorkbenchCommand::HidePanel.to_string(),
-                    data: Some(json!(self.panel_widget_id.to_raw())),
+                    data: Some(json!(self.kind)),
                     palette_desc: None,
                     target: CommandTarget::Workbench,
                 },
@@ -503,39 +539,43 @@ impl PanelMainHeader {
         };
         icons.push(icon);
 
-        let mut icon_svg = "chevron-up.svg";
-        for (_, panel) in data.panels.iter() {
-            if panel
-                .widgets
-                .iter()
-                .map(|(id, _)| id)
-                .any(|w| w == &self.panel_widget_id)
+        let position = data.panel_position(self.kind);
+        if let Some(position) = position {
+            if position == PanelPosition::BottomLeft
+                || position == PanelPosition::BottomRight
             {
-                if panel.maximized {
-                    icon_svg = "chevron-down.svg";
+                let mut icon_svg = "chevron-up.svg";
+                for (_, panel) in data.panels.iter() {
+                    if panel.widgets.contains(&self.kind) {
+                        if panel.maximized {
+                            icon_svg = "chevron-down.svg";
+                        }
+                        break;
+                    }
                 }
-                break;
+
+                let x =
+                    self_size.width - ((icons.len() + 1) as f64) * (gap + icon_size);
+                let icon = LapceIcon {
+                    icon: icon_svg.to_string(),
+                    rect: Size::new(icon_size, icon_size)
+                        .to_rect()
+                        .with_origin(Point::new(x, gap)),
+                    command: Command::new(
+                        LAPCE_NEW_COMMAND,
+                        LapceCommandNew {
+                            cmd: LapceWorkbenchCommand::ToggleMaximizedPanel
+                                .to_string(),
+                            data: Some(json!(self.kind)),
+                            palette_desc: None,
+                            target: CommandTarget::Workbench,
+                        },
+                        Target::Widget(data.id),
+                    ),
+                };
+                icons.push(icon);
             }
         }
-
-        let x = self_size.width - ((icons.len() + 1) as f64) * (gap + icon_size);
-        let icon = LapceIcon {
-            icon: icon_svg.to_string(),
-            rect: Size::new(icon_size, icon_size)
-                .to_rect()
-                .with_origin(Point::new(x, gap)),
-            command: Command::new(
-                LAPCE_NEW_COMMAND,
-                LapceCommandNew {
-                    cmd: LapceWorkbenchCommand::ToggleMaximizedPanel.to_string(),
-                    data: Some(json!(self.panel_widget_id.to_raw())),
-                    palette_desc: None,
-                    target: CommandTarget::Workbench,
-                },
-                Target::Widget(data.id),
-            ),
-        };
-        icons.push(icon);
 
         self.icons = icons;
     }

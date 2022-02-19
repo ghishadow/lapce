@@ -8,6 +8,9 @@ use std::{
     time::Duration,
 };
 
+#[cfg(target_os = "windows")]
+use std::os::windows::process::CommandExt;
+
 use anyhow::{anyhow, Result};
 use jsonrpc_lite::{Id, JsonRpc, Params};
 use lapce_rpc::RequestId;
@@ -62,6 +65,14 @@ impl LspCatalog {
             dispatcher: None,
             clients: HashMap::new(),
         }
+    }
+
+    pub fn stop(&mut self) {
+        for (_, client) in self.clients.iter() {
+            client.stop();
+        }
+        self.clients.clear();
+        self.dispatcher.take();
     }
 
     pub fn start_server(
@@ -328,7 +339,10 @@ impl LspClient {
         options: Option<Value>,
         dispatcher: Dispatcher,
     ) -> Arc<LspClient> {
-        let mut process = Command::new(exec_path)
+        let mut process = Command::new(exec_path);
+        #[cfg(target_os = "windows")]
+        let mut process = process.creation_flags(0x08000000);
+        let mut process = process
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .spawn()
@@ -361,7 +375,6 @@ impl LspClient {
                         local_lsp_client.handle_message(message_str.as_ref());
                     }
                     Err(err) => {
-                        eprintln!("lsp read Error occurred {:?}", err);
                         return;
                     }
                 };
@@ -371,6 +384,10 @@ impl LspClient {
         lsp_client.initialize();
 
         lsp_client
+    }
+
+    fn stop(&self) {
+        self.state.lock().process.kill();
     }
 
     pub fn get_uri(&self, buffer: &Buffer) -> Url {
@@ -416,9 +433,7 @@ impl LspClient {
                 let error = value.get_error().unwrap();
                 self.handle_response(id, Err(anyhow!("{}", error)));
             }
-            Err(err) => {
-                eprintln!("Error in parsing incoming string: {} \n {}", err, message)
-            }
+            Err(err) => {}
         }
     }
 
@@ -440,7 +455,7 @@ impl LspClient {
                     }),
                 );
             }
-            _ => eprintln!("{} {:?}", method, params),
+            _ => (),
         }
     }
 
@@ -492,24 +507,24 @@ impl LspClient {
     }
 
     fn initialize(&self) {
-        let root_url =
-            Url::from_directory_path(self.dispatcher.workspace.lock().clone())
-                .unwrap();
-        let (sender, receiver) = channel();
-        self.send_initialize(Some(root_url), move |lsp_client, result| {
-            if let Ok(result) = result {
-                {
-                    let init_result: InitializeResult =
-                        serde_json::from_value(result).unwrap();
-                    let mut state = lsp_client.state.lock();
-                    state.server_capabilities = Some(init_result.capabilities);
-                    state.is_initialized = true;
+        if let Some(workspace) = self.dispatcher.workspace.lock().clone() {
+            let root_url = Url::from_directory_path(workspace).unwrap();
+            let (sender, receiver) = channel();
+            self.send_initialize(Some(root_url), move |lsp_client, result| {
+                if let Ok(result) = result {
+                    {
+                        let init_result: InitializeResult =
+                            serde_json::from_value(result).unwrap();
+                        let mut state = lsp_client.state.lock();
+                        state.server_capabilities = Some(init_result.capabilities);
+                        state.is_initialized = true;
+                    }
+                    lsp_client.send_initialized();
                 }
-                lsp_client.send_initialized();
-            }
-            sender.send(true);
-        });
-        receiver.recv_timeout(Duration::from_millis(1000));
+                sender.send(true);
+            });
+            receiver.recv_timeout(Duration::from_millis(1000));
+        }
     }
 
     pub fn send_did_open(
