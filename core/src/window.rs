@@ -80,6 +80,7 @@ impl LapceWindowNew {
         }
         let tab_id = WidgetId::next();
         let tab_data = LapceTabData::new(
+            data.window_id,
             tab_id,
             workspace,
             data.db.clone(),
@@ -110,7 +111,7 @@ impl LapceWindowNew {
             Target::Widget(data.active_id),
         ));
         data.tabs_order = Arc::new(self.tabs.iter().map(|t| t.id()).collect());
-        data.db.save_tabs(data);
+        data.db.save_tabs_async(data);
         ctx.children_changed();
         ctx.set_handled();
         ctx.request_layout();
@@ -150,7 +151,7 @@ impl LapceWindowNew {
         }
 
         data.tabs_order = Arc::new(self.tabs.iter().map(|t| t.id()).collect());
-        data.db.save_tabs(data);
+        data.db.save_tabs_async(data);
         ctx.children_changed();
         ctx.set_handled();
         ctx.request_layout();
@@ -184,6 +185,18 @@ impl Widget<LapceWindowData> for LapceWindowNew {
         env: &Env,
     ) {
         match event {
+            Event::WindowMoved(pos) => {
+                ctx.set_handled();
+                data.pos = *pos;
+            }
+            Event::WindowSize(size, scale) => {
+                ctx.set_handled();
+                data.size = if let Some(scale) = scale {
+                    *size / *scale
+                } else {
+                    *size
+                };
+            }
             Event::WindowConnected => {
                 ctx.submit_command(Command::new(
                     LAPCE_UI_COMMAND,
@@ -286,7 +299,7 @@ impl Widget<LapceWindowData> for LapceWindowNew {
                                 if i != data.active {
                                     data.active = i;
                                     data.active_id = tab.id();
-                                    data.db.save_tabs(data);
+                                    data.db.save_tabs_async(data);
                                     ctx.submit_command(Command::new(
                                         LAPCE_UI_COMMAND,
                                         LapceUICommand::Focus,
@@ -304,7 +317,7 @@ impl Widget<LapceWindowData> for LapceWindowNew {
                         data.active = *index;
                         data.tabs_order =
                             Arc::new(self.tabs.iter().map(|t| t.id()).collect());
-                        data.db.save_tabs(data);
+                        data.db.save_tabs_async(data);
                         return;
                     }
                     LapceUICommand::NextTab => {
@@ -318,7 +331,7 @@ impl Widget<LapceWindowData> for LapceWindowNew {
                         );
                         data.active = new_index;
                         data.active_id = self.tabs[new_index].id();
-                        data.db.save_tabs(data);
+                        data.db.save_tabs_async(data);
                         ctx.submit_command(Command::new(
                             LAPCE_UI_COMMAND,
                             LapceUICommand::Focus,
@@ -338,7 +351,7 @@ impl Widget<LapceWindowData> for LapceWindowNew {
                         );
                         data.active = new_index;
                         data.active_id = self.tabs[new_index].id();
-                        data.db.save_tabs(data);
+                        data.db.save_tabs_async(data);
                         ctx.submit_command(Command::new(
                             LAPCE_UI_COMMAND,
                             LapceUICommand::Focus,
@@ -399,8 +412,6 @@ impl Widget<LapceWindowData> for LapceWindowNew {
         data: &LapceWindowData,
         env: &Env,
     ) {
-        let start = std::time::SystemTime::now();
-
         self.menu.update(ctx, data, env);
         self.title.update(ctx, data, env);
 
@@ -415,15 +426,6 @@ impl Widget<LapceWindowData> for LapceWindowNew {
         for tab in self.tabs.iter_mut() {
             tab.update(ctx, data, env);
         }
-
-        // println!(
-        //     "update took {}",
-        //     std::time::SystemTime::now()
-        //         .duration_since(start)
-        //         .unwrap()
-        //         .as_micros() as f64
-        //         / 1000.0
-        // );
     }
 
     fn layout(
@@ -506,12 +508,6 @@ impl Widget<LapceWindowData> for LapceWindowNew {
         }
         let end = std::time::SystemTime::now();
         let duration = end.duration_since(start).unwrap().as_micros();
-        // println!("layout took {}", duration as f64 / 1000.0);
-        ctx.submit_command(Command::new(
-            LAPCE_UI_COMMAND,
-            LapceUICommand::UpdateWindowOrigin,
-            Target::Auto,
-        ));
 
         self_size
     }

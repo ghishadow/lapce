@@ -8,6 +8,9 @@ use std::{
     time::Duration,
 };
 
+#[cfg(target_os = "windows")]
+use std::os::windows::process::CommandExt;
+
 use anyhow::{anyhow, Result};
 use jsonrpc_lite::{Id, JsonRpc, Params};
 use lapce_rpc::RequestId;
@@ -336,7 +339,10 @@ impl LspClient {
         options: Option<Value>,
         dispatcher: Dispatcher,
     ) -> Arc<LspClient> {
-        let mut process = Command::new(exec_path)
+        let mut process = Command::new(exec_path);
+        #[cfg(target_os = "windows")]
+        let mut process = process.creation_flags(0x08000000);
+        let mut process = process
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .spawn()
@@ -369,7 +375,6 @@ impl LspClient {
                         local_lsp_client.handle_message(message_str.as_ref());
                     }
                     Err(err) => {
-                        eprintln!("lsp read Error occurred {:?}", err);
                         return;
                     }
                 };
@@ -428,9 +433,7 @@ impl LspClient {
                 let error = value.get_error().unwrap();
                 self.handle_response(id, Err(anyhow!("{}", error)));
             }
-            Err(err) => {
-                eprintln!("Error in parsing incoming string: {} \n {}", err, message)
-            }
+            Err(err) => {}
         }
     }
 
@@ -452,7 +455,7 @@ impl LspClient {
                     }),
                 );
             }
-            _ => eprintln!("{} {:?}", method, params),
+            _ => (),
         }
     }
 

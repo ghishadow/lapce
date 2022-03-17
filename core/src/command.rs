@@ -2,7 +2,7 @@ use std::{collections::HashMap, path::PathBuf, sync::Arc};
 
 use alacritty_terminal::ansi::CursorShape;
 use anyhow::Result;
-use druid::{Point, Rect, Selector, Size, WidgetId};
+use druid::{Point, Rect, Selector, Size, WidgetId, WindowId};
 use indexmap::IndexMap;
 use lapce_proxy::{
     dispatch::{DiffInfo, FileDiff, FileNodeItem},
@@ -28,6 +28,7 @@ use crate::{
     menu::MenuItem,
     movement::{LinePosition, Movement},
     palette::{NewPaletteItem, PaletteType},
+    proxy::ProxyStatus,
     split::{SplitDirection, SplitMoveDirection},
     state::LapceWorkspace,
 };
@@ -134,6 +135,10 @@ pub enum LapceWorkbenchCommand {
     #[strum(serialize = "reload_window")]
     #[strum(message = "Reload Window")]
     ReloadWindow,
+
+    #[strum(message = "New Window")]
+    #[strum(serialize = "new_window")]
+    NewWindow,
 
     #[strum(serialize = "connect_ssh_host")]
     #[strum(message = "Connect to SSH Host")]
@@ -471,6 +476,7 @@ pub enum LapceUICommand {
     RunPaletteReferences(Vec<EditorLocationNew>),
     UpdatePaletteItems(String, Vec<NewPaletteItem>),
     FilterPaletteItems(String, String, Vec<NewPaletteItem>),
+    UpdatePickerPwd(PathBuf),
     UpdatePickerItems(PathBuf, HashMap<PathBuf, FileNodeItem>),
     UpdateExplorerItems(usize, PathBuf, Vec<FileNodeItem>),
     UpdateInstalledPlugins(HashMap<String, PluginDescription>),
@@ -488,6 +494,7 @@ pub enum LapceUICommand {
     NextTab,
     PreviousTab,
     FilterItems,
+    NewWindow(WindowId),
     ReloadWindow,
     CloseBuffers(Vec<BufferId>),
     RequestPaintRect(Rect),
@@ -540,6 +547,7 @@ pub enum LapceUICommand {
     ScrollTo((f64, f64)),
     ForceScrollTo(f64, f64),
     HomeDir(PathBuf),
+    ProxyUpdateStatus(ProxyStatus),
     CloseTerminal(TermId),
     SplitTerminal(bool, WidgetId),
     SplitTerminalClose(TermId, WidgetId),
@@ -556,7 +564,8 @@ pub enum LapceUICommand {
     SplitReplace(usize, SplitContent),
     SplitChangeDirectoin(SplitDirection),
     EditorTabAdd(usize, EditorTabChild),
-    EditorTabRemove(usize),
+    EditorTabRemove(usize, bool, bool),
+    EditorTabSwap(usize, usize),
     JumpToPosition(Option<WidgetId>, Position),
     JumpToLine(Option<WidgetId>, usize),
     JumpToLocation(Option<WidgetId>, EditorLocationNew),

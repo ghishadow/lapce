@@ -28,6 +28,7 @@ use druid::{
     WidgetExt, WidgetPod,
 };
 use lapce_proxy::terminal::TermId;
+use serde::{Deserialize, Serialize};
 use strum::EnumMessage;
 
 #[derive(Debug)]
@@ -38,7 +39,7 @@ pub enum SplitMoveDirection {
     Left,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub enum SplitDirection {
     Vertical,
     Horizontal,
@@ -336,7 +337,6 @@ impl LapceSplitNew {
         data.main_split.editors.remove(&view_id);
         self.children.remove(index);
         self.children_ids.remove(index);
-        data.main_split.editors_order = Arc::new(self.children_ids.clone());
 
         self.even_flex_children();
         ctx.children_changed();
@@ -372,10 +372,6 @@ impl LapceSplitNew {
 
         self.children.swap(index, index + 1);
         self.children_ids.swap(index, index + 1);
-
-        if data.main_split.editors.contains_key(&widget_id) {
-            data.main_split.editors_order = Arc::new(self.children_ids.clone());
-        }
 
         ctx.request_layout();
     }
@@ -548,7 +544,7 @@ impl LapceSplitNew {
         index: usize,
         content: &SplitContent,
     ) {
-        let new_widget = content.widget(data, ctx);
+        let new_widget = content.widget(data);
         self.replace_child(index, new_widget.boxed());
         ctx.children_changed();
     }
@@ -687,13 +683,8 @@ impl LapceSplitNew {
         content: &SplitContent,
         focus_new: bool,
     ) {
-        let new_index = if self.children.len() == 0 {
-            0
-        } else {
-            index + 1
-        };
-        let new_child = content.widget(data, ctx);
-        self.insert_flex_child(new_index, new_child, None, 1.0);
+        let new_child = content.widget(data);
+        self.insert_flex_child(index, new_child, None, 1.0);
         self.even_flex_children();
         ctx.children_changed();
         if focus_new {
@@ -751,7 +742,6 @@ impl LapceSplitNew {
         data.main_split
             .editors
             .insert(editor_data.view_id, Arc::new(editor_data));
-        data.main_split.editors_order = Arc::new(self.children_ids.clone());
     }
 }
 
@@ -1062,7 +1052,7 @@ impl Widget<LapceTabData> for LapceSplitNew {
                 child.layout_rect = child.layout_rect.with_origin(Point::new(x, y));
             } else {
                 let flex = if i == children_len - 1 {
-                    flex_total
+                    flex_total + non_flex_total
                         - match self.direction {
                             SplitDirection::Vertical => x,
                             SplitDirection::Horizontal => y,
