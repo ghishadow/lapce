@@ -15,11 +15,11 @@ diff = "0.1.12"
 libloading = "0.7"
 flate2 = "1.0.22"
 ureq = { version = "2.4.0", features = ["json"] }
-hashbrown = "0.11.2"
+hashbrown = "0.12.0"
 sled = "0.34.7"
 base64 = "0.13.0"
 alacritty_terminal = "0.16"
-config = "0.11"
+config = "0.12.0"
 indexmap = "1.7.0"
 directories = "4.0.1"
 tinyfiledialogs = "3.8.3"
@@ -30,15 +30,15 @@ im = { version = "15.0.0", features = ["serde"] }
 crossbeam-channel = "0.5.0"
 crossbeam-utils = "0.8.4"
 regex = "1.4.2"
-usvg = "0.14.0"
+usvg = "0.22.0"
 jsonrpc-lite = "0.5.0"
-bit-vec = "0.5.0"
-parking_lot = { version = "0.11.0", features = ["deadlock_detection"] }
-include_dir = "0.6.0"
+bit-vec = "0.6.3"
+parking_lot = { version = "0.12.0", features = ["deadlock_detection"] }
+include_dir = "0.7.2"
 thiserror = "1.0"
 anyhow = "1.0.32"
-strum = "0.19"
-strum_macros = "0.19"
+strum = "0.24"
+strum_macros = "0.24"
 lazy_static = "1.4.0"
 serde = "1.0"
 serde_json = "1.0"
@@ -47,8 +47,8 @@ xi-rope = { git = "https://github.com/lapce/xi-editor", features = ["serde"] }
 xi-unicode = "0.3.0"
 fuzzy-matcher = "0.3.7"
 uuid = { version = "0.8.2", features = ["v4"] }
-lsp-types = { version = "0.89.2", features = ["proposed"] }
-druid = { git = "https://github.com/lapce/druid", features = [ "svg", "im", "serde", ] }
+lsp-types = { version = "0.92.1", features = ["proposed"] }
+druid = { git = "https://github.com/ghishadow/druid", branch ="update_dep",  features = [ "svg", "im", "serde", ] }
 #druid = { path = "../../druid/druid", features = ["svg", "im" , "serde"] }
 toml = { version = "0.5.8", features = ["preserve_order"] }
 structdesc = { git = "https://github.com/lapce/structdesc" }
