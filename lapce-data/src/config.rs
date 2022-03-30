@@ -76,6 +76,7 @@ impl LapceTheme {
 
     pub const PANEL_BACKGROUND: &'static str = "panel.background";
     pub const PANEL_CURRENT: &'static str = "panel.current";
+    pub const PANEL_HOVERED: &'static str = "panel.hovered";
 
     pub const STATUS_BACKGROUND: &'static str = "status.background";
 
@@ -371,14 +372,15 @@ impl Config {
         }
 
         match workspace.kind {
-            crate::state::LapceWorkspaceType::Local => {
+            LapceWorkspaceType::Local => {
                 if let Some(path) = workspace.path.as_ref() {
                     let path = path.join("./.lapce/settings.toml");
                     let _ = settings
                         .merge(config::File::from(path.as_path()).required(false));
                 }
             }
-            crate::state::LapceWorkspaceType::RemoteSSH(_, _) => {}
+            LapceWorkspaceType::RemoteSSH(_, _) => {}
+            LapceWorkspaceType::RemoteWSL => {}
         }
 
         let mut config: Config = settings.try_into()?;
@@ -503,15 +505,14 @@ impl Config {
 
         self.lapce.color_theme = theme.to_string();
 
-        if !preview {
-            if Config::update_file(
+        if !preview
+            && Config::update_file(
                 "lapce.color-theme",
                 toml::Value::String(theme.to_string()),
             )
             .is_none()
-            {
-                return false;
-            }
+        {
+            return false;
         }
 
         true
@@ -577,6 +578,7 @@ impl Config {
                         LapceWorkspaceType::RemoteSSH(user, host) => {
                             format!("ssh://{}@{}", user, host)
                         }
+                        LapceWorkspaceType::RemoteWSL => "wsl".to_string(),
                     }),
                 );
                 table.insert(
@@ -622,6 +624,7 @@ impl Config {
                             let host = parts.next()?.to_string();
                             LapceWorkspaceType::RemoteSSH(user, host)
                         }
+                        "wsl" => LapceWorkspaceType::RemoteWSL,
                         _ => LapceWorkspaceType::Local,
                     };
                     let last_open = value

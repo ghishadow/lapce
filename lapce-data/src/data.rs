@@ -182,6 +182,7 @@ impl Data for LapceWindowData {
             && self.size.same(&other.size)
             && self.pos.same(&other.pos)
             && self.keypress.same(&other.keypress)
+            && self.plugins.same(&other.plugins)
     }
 }
 
@@ -1403,6 +1404,26 @@ impl LapceTabData {
                     LapceUICommand::RunPalette(Some(PaletteType::SshHost)),
                     Target::Widget(self.palette.widget_id),
                 ));
+            }
+            LapceWorkbenchCommand::ConnectWsl => ctx.submit_command(Command::new(
+                LAPCE_UI_COMMAND,
+                LapceUICommand::SetWorkspace(LapceWorkspace {
+                    kind: LapceWorkspaceType::RemoteWSL,
+                    path: None,
+                    last_open: 0,
+                }),
+                Target::Auto,
+            )),
+            LapceWorkbenchCommand::DisconnectRemote => {
+                ctx.submit_command(Command::new(
+                    LAPCE_UI_COMMAND,
+                    LapceUICommand::SetWorkspace(LapceWorkspace {
+                        kind: LapceWorkspaceType::Local,
+                        path: None,
+                        last_open: 0,
+                    }),
+                    Target::Auto,
+                ))
             }
         }
     }
