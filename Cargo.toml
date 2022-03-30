@@ -20,3 +20,8 @@ path = "lapce-proxy/src/bin/lapce-proxy.rs"
 
 [workspace]
 members = ["lapce-ui", "lapce-proxy", "lapce-rpc", "lapce-data", "lapce-core"]
+
+[profile.release]
+opt-level = "s" # Optimize for size
+strip = "debuginfo"
+lto = "thin"
