@@ -48,6 +48,7 @@ pub enum LapceLanguage {
     C,
     Cpp,
     Json,
+    Yaml,
 }
 
 impl LapceLanguage {
@@ -67,6 +68,7 @@ impl LapceLanguage {
             "c" | "h" => LapceLanguage::C,
             "cpp" | "cxx" | "cc" | "hpp" | "hxx" => LapceLanguage::Cpp,
             "json" => LapceLanguage::Json,
+            "yml" | "yaml" => LapceLanguage::Yaml,
             _ => return None,
         })
     }
@@ -86,6 +88,7 @@ impl LapceLanguage {
             LapceLanguage::C => "//",
             LapceLanguage::Cpp => "//",
             LapceLanguage::Json => "",
+            LapceLanguage::Yaml => "",
         }
     }
 
@@ -104,6 +107,7 @@ impl LapceLanguage {
             LapceLanguage::C => "  ",
             LapceLanguage::Cpp => "    ",
             LapceLanguage::Json => "    ",
+            LapceLanguage::Yaml => "  ",
         }
     }
 
@@ -124,6 +128,7 @@ impl LapceLanguage {
             LapceLanguage::C => tree_sitter_c::language(),
             LapceLanguage::Cpp => tree_sitter_cpp::language(),
             LapceLanguage::Json => tree_sitter_json::language(),
+            LapceLanguage::Yaml => tree_sitter_yaml::language(),
         }
     }
 
@@ -150,6 +155,7 @@ impl LapceLanguage {
             LapceLanguage::C => tree_sitter_c::HIGHLIGHT_QUERY,
             LapceLanguage::Cpp => tree_sitter_cpp::HIGHLIGHT_QUERY,
             LapceLanguage::Json => tree_sitter_json::HIGHLIGHT_QUERY,
+            LapceLanguage::Yaml => tree_sitter_yaml::HIGHLIGHT_QUERY,
         };
 
         HighlightConfiguration::new(language, query, "", "").unwrap()
