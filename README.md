@@ -58,6 +58,9 @@ cargo build --release
 ```
 The exectuable will be available at `target/release/lapce`
 
+[![Packaging status](https://repology.org/badge/vertical-allrepos/lapce.svg)](https://repology.org/project/lapce/versions)
+
+
 ## Feedback
 
 * Chat on [Discord](https://discord.gg/n8tGJ6Rn6D)
