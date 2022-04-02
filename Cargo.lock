@@ -1874,6 +1874,7 @@ dependencies = [
  "tree-sitter-rust",
  "tree-sitter-toml",
  "tree-sitter-typescript",
+ "tree-sitter-yaml",
  "xi-rope",
 ]
 
@@ -4179,6 +4180,15 @@ name = "tree-sitter-typescript"
 version = "0.20.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8935efd97c92067c9b2b6d7acb647607590996ba80f3a7be09a197f9c1fdab73"
+dependencies = [
+ "cc",
+ "tree-sitter",
+]
+
+[[package]]
+name = "tree-sitter-yaml"
+version = "0.20.6"
+source = "git+https://github.com/ghishadow/tree-sitter-yaml.git?branch=master#4a4cd5b445be8cf0baf9b25ebf6279c8dcc86f31"
 dependencies = [
  "cc",
  "tree-sitter",

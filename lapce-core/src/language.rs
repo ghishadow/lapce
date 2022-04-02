@@ -88,7 +88,7 @@ impl LapceLanguage {
             LapceLanguage::C => "//",
             LapceLanguage::Cpp => "//",
             LapceLanguage::Json => "",
-            LapceLanguage::Yaml => "",
+            LapceLanguage::Yaml => "#",
         }
     }
 
