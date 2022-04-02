@@ -56,8 +56,11 @@ magenta = "#A626A4"
 "completion.background" = "#eaeaeb"
 "completion.current" = "#dbdbdc"
 
+"hover.background" = "#eaeaeb"
+
 "panel.background" = "#eaeaeb"
 "panel.current" = "#dbdbdc"
+"panel.hovered" = "#E4E4E6"
 
 "status.background" = "#eaeaeb"
 
@@ -72,6 +75,7 @@ magenta = "#A626A4"
 "style.structure" = "$yellow"
 "style.interface" = "$yellow"
 "style.attribute" = "$yellow"
+"style.constructor" = "$yellow"
 
 "style.function" = "$blue"
 "style.method" = "$blue"
@@ -90,3 +94,5 @@ magenta = "#A626A4"
 
 "style.type.builtin" = "$cyan"
 "style.builtinType" = "$cyan"
+"style.escape" = "$cyan"
+"style.embedded" = "$cyan"

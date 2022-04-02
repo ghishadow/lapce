@@ -1,0 +1,1232 @@
+use alacritty_terminal::{grid::Dimensions, term::cell::Flags};
+use anyhow::Result;
+use crossbeam_channel::{unbounded, Receiver, Sender, TryRecvError};
+use druid::{
+    piet::{Svg, TextAttribute},
+    Command, ExtEventSink, FontFamily, FontWeight, Lens, Modifiers, Target,
+    WidgetId,
+};
+use druid::{
+    piet::{Text, TextLayout as PietTextLayout, TextLayoutBuilder},
+    Data, Env, EventCtx, PaintCtx, Point, RenderContext, Size,
+};
+use fuzzy_matcher::skim::SkimMatcherV2;
+use fuzzy_matcher::FuzzyMatcher;
+use itertools::Itertools;
+use lsp_types::{DocumentSymbolResponse, Range, SymbolKind};
+use serde_json;
+use std::collections::HashSet;
+use std::path::PathBuf;
+use std::sync::Arc;
+use std::{cmp::Ordering, path::Path};
+use usvg;
+use uuid::Uuid;
+
+use crate::{
+    buffer::BufferContent,
+    command::LAPCE_UI_COMMAND,
+    command::{CommandExecuted, LapceCommand, LAPCE_NEW_COMMAND},
+    command::{LapceCommandNew, LapceUICommand},
+    config::{Config, LapceTheme},
+    data::{FocusArea, LapceMainSplitData, LapceTabData, PanelKind},
+    editor::EditorLocationNew,
+    find::Find,
+    keypress::{KeyPressData, KeyPressFocus},
+    movement::Movement,
+    proxy::LapceProxy,
+    state::LapceWorkspace,
+    state::LapceWorkspaceType,
+    state::Mode,
+    svg::{file_svg_new, symbol_svg_new},
+    terminal::TerminalSplitData,
+};
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum PaletteType {
+    File,
+    Line,
+    GlobalSearch,
+    DocumentSymbol,
+    Workspace,
+    Command,
+    Reference,
+    Theme,
+    SshHost,
+}
+
+impl PaletteType {
+    fn string(&self) -> String {
+        match &self {
+            PaletteType::File => "".to_string(),
+            PaletteType::Line => "/".to_string(),
+            PaletteType::DocumentSymbol => "@".to_string(),
+            PaletteType::GlobalSearch => "?".to_string(),
+            PaletteType::Workspace => ">".to_string(),
+            PaletteType::Command => ":".to_string(),
+            PaletteType::Reference => "".to_string(),
+            PaletteType::Theme => "".to_string(),
+            PaletteType::SshHost => "".to_string(),
+        }
+    }
+
+    pub fn has_preview(&self) -> bool {
+        matches!(
+            self,
+            PaletteType::Line
+                | PaletteType::DocumentSymbol
+                | PaletteType::GlobalSearch
+                | PaletteType::Reference
+        )
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum PaletteIcon {
+    File(String),
+    Symbol(SymbolKind),
+    None,
+}
+
+#[derive(Clone, PartialEq)]
+pub enum PaletteStatus {
+    Inactive,
+    Started,
+    Done,
+}
+
+#[derive(Clone, Debug)]
+pub enum PaletteItemContent {
+    File(PathBuf, PathBuf),
+    Line(usize, String),
+    TerminalLine(i32, String),
+    DocumentSymbol {
+        kind: SymbolKind,
+        name: String,
+        range: Range,
+        container_name: Option<String>,
+    },
+    ReferenceLocation(PathBuf, EditorLocationNew),
+    Workspace(LapceWorkspace),
+    SshHost(String, String),
+    Command(LapceCommandNew),
+    Theme(String),
+}
+
+impl PaletteItemContent {
+    fn select(
+        &self,
+        ctx: &mut EventCtx,
+        preview: bool,
+        preview_editor_id: WidgetId,
+    ) -> Option<PaletteType> {
+        match &self {
+            PaletteItemContent::File(_, full_path) => {
+                if !preview {
+                    ctx.submit_command(Command::new(
+                        LAPCE_UI_COMMAND,
+                        LapceUICommand::OpenFile(full_path.clone()),
+                        Target::Auto,
+                    ));
+                }
+            }
+            #[allow(unused_variables)]
+            PaletteItemContent::DocumentSymbol {
+                kind,
+                name,
+                range,
+                container_name,
+            } => {
+                let editor_id = if preview {
+                    Some(preview_editor_id)
+                } else {
+                    None
+                };
+                ctx.submit_command(Command::new(
+                    LAPCE_UI_COMMAND,
+                    LapceUICommand::JumpToPosition(editor_id, range.start),
+                    Target::Auto,
+                ));
+            }
+            PaletteItemContent::Line(line, _) => {
+                let editor_id = if preview {
+                    Some(preview_editor_id)
+                } else {
+                    None
+                };
+                ctx.submit_command(Command::new(
+                    LAPCE_UI_COMMAND,
+                    LapceUICommand::JumpToLine(editor_id, *line),
+                    Target::Auto,
+                ));
+            }
+            PaletteItemContent::ReferenceLocation(_rel_path, location) => {
+                let editor_id = if preview {
+                    Some(preview_editor_id)
+                } else {
+                    None
+                };
+                ctx.submit_command(Command::new(
+                    LAPCE_UI_COMMAND,
+                    LapceUICommand::JumpToLocation(editor_id, location.clone()),
+                    Target::Auto,
+                ));
+            }
+            PaletteItemContent::Workspace(workspace) => {
+                if !preview {
+                    ctx.submit_command(Command::new(
+                        LAPCE_UI_COMMAND,
+                        LapceUICommand::SetWorkspace(workspace.clone()),
+                        Target::Auto,
+                    ));
+                }
+            }
+            PaletteItemContent::Theme(theme) => {
+                ctx.submit_command(Command::new(
+                    LAPCE_UI_COMMAND,
+                    LapceUICommand::SetTheme(theme.to_string(), preview),
+                    Target::Auto,
+                ));
+            }
+            PaletteItemContent::Command(command) => {
+                if !preview {
+                    ctx.submit_command(Command::new(
+                        LAPCE_NEW_COMMAND,
+                        command.clone(),
+                        Target::Auto,
+                    ));
+                }
+            }
+            PaletteItemContent::TerminalLine(line, _content) => {
+                if !preview {
+                    ctx.submit_command(Command::new(
+                        LAPCE_UI_COMMAND,
+                        LapceUICommand::TerminalJumpToLine(*line),
+                        Target::Auto,
+                    ));
+                }
+            }
+            PaletteItemContent::SshHost(user, host) => {
+                if !preview {
+                    ctx.submit_command(Command::new(
+                        LAPCE_UI_COMMAND,
+                        LapceUICommand::SetWorkspace(LapceWorkspace {
+                            kind: LapceWorkspaceType::RemoteSSH(
+                                user.to_string(),
+                                host.to_string(),
+                            ),
+                            path: None,
+                            last_open: 0,
+                        }),
+                        Target::Auto,
+                    ));
+                }
+            }
+        }
+        None
+    }
+
+    pub fn paint(
+        &self,
+        ctx: &mut PaintCtx,
+        line: usize,
+        indices: &[usize],
+        line_height: f64,
+        config: &Config,
+    ) {
+        let (svg, text, text_indices, hint, hint_indices) = match &self {
+            PaletteItemContent::File(path, _) => file_paint_items(path, indices),
+            #[allow(unused_variables)]
+            PaletteItemContent::DocumentSymbol {
+                kind,
+                name,
+                range,
+                container_name,
+            } => {
+                let text = name.to_string();
+                let hint = container_name.clone().unwrap_or_else(|| "".to_string());
+                let text_indices = indices
+                    .iter()
+                    .filter_map(|i| {
+                        let i = *i;
+                        if i < text.len() {
+                            Some(i)
+                        } else {
+                            None
+                        }
+                    })
+                    .collect();
+                let hint_indices = indices
+                    .iter()
+                    .filter_map(|i| {
+                        let i = *i;
+                        if i >= text.len() {
+                            Some(i - text.len())
+                        } else {
+                            None
+                        }
+                    })
+                    .collect();
+                (symbol_svg_new(kind), text, text_indices, hint, hint_indices)
+            }
+            PaletteItemContent::Line(_, text) => {
+                (None, text.clone(), indices.to_vec(), "".to_string(), vec![])
+            }
+            PaletteItemContent::ReferenceLocation(rel_path, _location) => {
+                file_paint_items(rel_path, indices)
+            }
+            PaletteItemContent::Workspace(w) => {
+                let text = w.path.as_ref().unwrap().to_str().unwrap();
+                let text = match &w.kind {
+                    LapceWorkspaceType::Local => text.to_string(),
+                    LapceWorkspaceType::RemoteSSH(user, host) => {
+                        format!("[{user}@{host}] {text}")
+                    }
+                    LapceWorkspaceType::RemoteWSL => {
+                        format!("[wsl] {text}")
+                    }
+                };
+                (None, text, indices.to_vec(), "".to_string(), vec![])
+            }
+            PaletteItemContent::Command(command) => (
+                None,
+                command
+                    .palette_desc
+                    .as_ref()
+                    .map(|m| m.to_string())
+                    .unwrap_or_else(|| "".to_string()),
+                indices.to_vec(),
+                "".to_string(),
+                vec![],
+            ),
+            PaletteItemContent::Theme(theme) => (
+                None,
+                theme.to_string(),
+                indices.to_vec(),
+                "".to_string(),
+                vec![],
+            ),
+            PaletteItemContent::TerminalLine(_line, content) => (
+                None,
+                content.clone(),
+                indices.to_vec(),
+                "".to_string(),
+                vec![],
+            ),
+            PaletteItemContent::SshHost(user, host) => (
+                None,
+                format!("{user}@{host}"),
+                indices.to_vec(),
+                "".to_string(),
+                vec![],
+            ),
+        };
+
+        if let Some(svg) = svg.as_ref() {
+            let width = 14.0;
+            let height = 14.0;
+            let rect = Size::new(width, height).to_rect().with_origin(Point::new(
+                (line_height - width) / 2.0 + 5.0,
+                (line_height - height) / 2.0 + line_height * line as f64,
+            ));
+            ctx.draw_svg(svg, rect, None);
+        }
+
+        let svg_x = match &self {
+            &PaletteItemContent::Line(_, _) | &PaletteItemContent::Workspace(_) => {
+                0.0
+            }
+            _ => line_height,
+        };
+
+        let focus_color = config.get_color_unchecked(LapceTheme::EDITOR_FOCUS);
+
+        let mut text_layout = ctx
+            .text()
+            .new_text_layout(text)
+            .font(FontFamily::SYSTEM_UI, 14.0)
+            .text_color(
+                config
+                    .get_color_unchecked(LapceTheme::EDITOR_FOREGROUND)
+                    .clone(),
+            );
+        for i in &text_indices {
+            let i = *i;
+            text_layout = text_layout.range_attribute(
+                i..i + 1,
+                TextAttribute::TextColor(focus_color.clone()),
+            );
+            text_layout = text_layout
+                .range_attribute(i..i + 1, TextAttribute::Weight(FontWeight::BOLD));
+        }
+        let text_layout = text_layout.build().unwrap();
+        let x = svg_x + 5.0;
+        let y = line_height * line as f64 + 4.0;
+        let point = Point::new(x, y);
+        ctx.draw_text(&text_layout, point);
+
+        if !hint.is_empty() {
+            let text_x = text_layout.size().width;
+            let mut text_layout = ctx
+                .text()
+                .new_text_layout(hint)
+                .font(FontFamily::SYSTEM_UI, 13.0)
+                .text_color(
+                    config.get_color_unchecked(LapceTheme::EDITOR_DIM).clone(),
+                );
+            for i in &hint_indices {
+                let i = *i;
+                text_layout = text_layout.range_attribute(
+                    i..i + 1,
+                    TextAttribute::TextColor(focus_color.clone()),
+                );
+                text_layout = text_layout.range_attribute(
+                    i..i + 1,
+                    TextAttribute::Weight(FontWeight::BOLD),
+                );
+            }
+            let text_layout = text_layout.build().unwrap();
+            ctx.draw_text(
+                &text_layout,
+                Point::new(x + text_x + 4.0, line as f64 * line_height + 5.0),
+            );
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct NewPaletteItem {
+    pub content: PaletteItemContent,
+    pub filter_text: String,
+    pub score: i64,
+    pub indices: Vec<usize>,
+}
+
+pub struct PaletteViewLens;
+
+#[derive(Clone, Data)]
+pub struct PaletteViewData {
+    pub palette: Arc<PaletteData>,
+    pub find: Arc<Find>,
+    pub workspace: Arc<LapceWorkspace>,
+    pub main_split: LapceMainSplitData,
+    pub keypress: Arc<KeyPressData>,
+    pub config: Arc<Config>,
+    pub focus_area: FocusArea,
+    pub terminal: Arc<TerminalSplitData>,
+}
+
+impl Lens<LapceTabData, PaletteViewData> for PaletteViewLens {
+    fn with<V, F: FnOnce(&PaletteViewData) -> V>(
+        &self,
+        data: &LapceTabData,
+        f: F,
+    ) -> V {
+        let palette_view = data.palette_view_data();
+        f(&palette_view)
+    }
+
+    fn with_mut<V, F: FnOnce(&mut PaletteViewData) -> V>(
+        &self,
+        data: &mut LapceTabData,
+        f: F,
+    ) -> V {
+        let mut palette_view = data.palette_view_data();
+        let result = f(&mut palette_view);
+        data.palette = palette_view.palette.clone();
+        data.workspace = palette_view.workspace.clone();
+        data.keypress = palette_view.keypress.clone();
+        data.main_split = palette_view.main_split.clone();
+        data.find = palette_view.find;
+        result
+    }
+}
+
+#[derive(Clone)]
+pub struct PaletteData {
+    pub widget_id: WidgetId,
+    pub scroll_id: WidgetId,
+    pub status: PaletteStatus,
+    pub proxy: Arc<LapceProxy>,
+    pub palette_type: PaletteType,
+    pub sender: Sender<(String, String, Vec<NewPaletteItem>)>,
+    pub receiver: Option<Receiver<(String, String, Vec<NewPaletteItem>)>>,
+    pub run_id: String,
+    pub input: String,
+    pub cursor: usize,
+    pub index: usize,
+    pub items: Vec<NewPaletteItem>,
+    pub filtered_items: Vec<NewPaletteItem>,
+    pub preview_editor: WidgetId,
+}
+
+impl KeyPressFocus for PaletteViewData {
+    fn get_mode(&self) -> Mode {
+        Mode::Insert
+    }
+
+    fn check_condition(&self, condition: &str) -> bool {
+        matches!(condition, "list_focus" | "palette_focus" | "modal_focus")
+    }
+
+    fn run_command(
+        &mut self,
+        ctx: &mut EventCtx,
+        command: &LapceCommand,
+        _count: Option<usize>,
+        _mods: Modifiers,
+        _env: &Env,
+    ) -> CommandExecuted {
+        match command {
+            LapceCommand::ModalClose => {
+                self.cancel(ctx);
+            }
+            LapceCommand::DeleteBackward => {
+                self.delete_backward(ctx);
+            }
+            LapceCommand::DeleteToBeginningOfLine => {
+                self.delete_to_beginning_of_line(ctx);
+            }
+            LapceCommand::ListNext => {
+                self.next(ctx);
+            }
+            LapceCommand::ListPrevious => {
+                self.previous(ctx);
+            }
+            LapceCommand::ListSelect => {
+                self.select(ctx);
+            }
+            _ => return CommandExecuted::No,
+        }
+        CommandExecuted::Yes
+    }
+
+    fn receive_char(&mut self, ctx: &mut EventCtx, c: &str) {
+        let palette = Arc::make_mut(&mut self.palette);
+        palette.input.insert_str(palette.cursor, c);
+        palette.cursor += c.len();
+        self.update_palette(ctx);
+    }
+}
+
+impl PaletteData {
+    pub fn new(proxy: Arc<LapceProxy>) -> Self {
+        let (sender, receiver) = unbounded();
+        let widget_id = WidgetId::next();
+        let scroll_id = WidgetId::next();
+        let preview_editor = WidgetId::next();
+        Self {
+            widget_id,
+            scroll_id,
+            status: PaletteStatus::Inactive,
+            proxy,
+            palette_type: PaletteType::File,
+            sender,
+            receiver: Some(receiver),
+            run_id: Uuid::new_v4().to_string(),
+            input: "".to_string(),
+            cursor: 0,
+            index: 0,
+            items: Vec::new(),
+            filtered_items: Vec::new(),
+            preview_editor,
+        }
+    }
+
+    pub fn len(&self) -> usize {
+        self.current_items().len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    pub fn current_items(&self) -> &Vec<NewPaletteItem> {
+        if self.get_input() == "" {
+            &self.items
+        } else {
+            &self.filtered_items
+        }
+    }
+
+    pub fn preview(&self, ctx: &mut EventCtx) {
+        if let Some(item) = self.get_item() {
+            item.content.select(ctx, true, self.preview_editor);
+        }
+    }
+
+    pub fn get_item(&self) -> Option<&NewPaletteItem> {
+        let items = self.current_items();
+        if items.is_empty() {
+            return None;
+        }
+        Some(&items[self.index])
+    }
+
+    pub fn get_input(&self) -> &str {
+        match &self.palette_type {
+            PaletteType::File => &self.input,
+            PaletteType::Reference => &self.input,
+            PaletteType::Theme => &self.input,
+            PaletteType::SshHost => &self.input,
+            PaletteType::Line => &self.input[1..],
+            PaletteType::DocumentSymbol => &self.input[1..],
+            PaletteType::Workspace => &self.input[1..],
+            PaletteType::Command => &self.input[1..],
+            PaletteType::GlobalSearch => &self.input[1..],
+        }
+    }
+}
+
+impl PaletteViewData {
+    pub fn cancel(&mut self, ctx: &mut EventCtx) {
+        let palette = Arc::make_mut(&mut self.palette);
+        palette.status = PaletteStatus::Inactive;
+        palette.input = "".to_string();
+        palette.cursor = 0;
+        palette.index = 0;
+        palette.palette_type = PaletteType::File;
+        palette.items.clear();
+        palette.filtered_items.clear();
+        if ctx.is_focused() {
+            ctx.resign_focus();
+        }
+    }
+
+    pub fn run_references(
+        &mut self,
+        ctx: &mut EventCtx,
+        locations: &[EditorLocationNew],
+    ) {
+        self.run(ctx, Some(PaletteType::Reference));
+        let items: Vec<NewPaletteItem> = locations
+            .iter()
+            .map(|l| {
+                let full_path = l.path.clone();
+                let mut path = l.path.clone();
+                if let Some(workspace_path) = self.workspace.path.as_ref() {
+                    path = path
+                        .strip_prefix(workspace_path)
+                        .unwrap_or(&full_path)
+                        .to_path_buf();
+                }
+                let filter_text = path.to_str().unwrap_or("").to_string();
+                NewPaletteItem {
+                    content: PaletteItemContent::ReferenceLocation(path, l.clone()),
+                    filter_text,
+                    score: 0,
+                    indices: vec![],
+                }
+            })
+            .collect();
+        let palette = Arc::make_mut(&mut self.palette);
+        palette.items = items;
+        palette.preview(ctx);
+    }
+
+    pub fn run(&mut self, ctx: &mut EventCtx, palette_type: Option<PaletteType>) {
+        let palette = Arc::make_mut(&mut self.palette);
+        palette.status = PaletteStatus::Started;
+        palette.palette_type = palette_type.unwrap_or(PaletteType::File);
+        palette.input = palette.palette_type.string();
+        palette.items = Vec::new();
+        palette.filtered_items = Vec::new();
+        palette.run_id = Uuid::new_v4().to_string();
+        palette.cursor = palette.input.len();
+        palette.index = 0;
+
+        if let Some(active_editor_content) =
+            self.main_split.active_editor().map(|e| e.content.clone())
+        {
+            let preview_editor = Arc::make_mut(
+                self.main_split
+                    .editors
+                    .get_mut(&palette.preview_editor)
+                    .unwrap(),
+            );
+            preview_editor.content = active_editor_content;
+        }
+
+        match palette.palette_type {
+            PaletteType::File => {
+                self.get_files(ctx);
+            }
+            PaletteType::Line => {
+                self.get_lines(ctx);
+                self.palette.preview(ctx);
+            }
+            PaletteType::DocumentSymbol => {
+                self.get_document_symbols(ctx);
+            }
+            PaletteType::Workspace => {
+                self.get_workspaces(ctx);
+            }
+            PaletteType::Reference => {}
+            PaletteType::SshHost => {
+                self.get_ssh_hosts(ctx);
+            }
+            PaletteType::GlobalSearch => {
+                self.get_global_search(ctx);
+            }
+            PaletteType::Command => {
+                self.get_commands(ctx);
+            }
+            PaletteType::Theme => {
+                let config = self.config.clone();
+                self.get_themes(ctx, &config);
+            }
+        }
+    }
+
+    fn delete_backward(&mut self, ctx: &mut EventCtx) {
+        let palette = Arc::make_mut(&mut self.palette);
+        if palette.cursor == 0 {
+            return;
+        }
+
+        palette.input.remove(palette.cursor - 1);
+        palette.cursor -= 1;
+        self.update_palette(ctx);
+    }
+
+    pub fn delete_to_beginning_of_line(&mut self, ctx: &mut EventCtx) {
+        let palette = Arc::make_mut(&mut self.palette);
+        if palette.cursor == 0 {
+            return;
+        }
+
+        let start = match palette.palette_type {
+            PaletteType::File => 0,
+            PaletteType::Reference => 0,
+            PaletteType::Theme => 0,
+            PaletteType::SshHost => 0,
+            PaletteType::Line => 1,
+            PaletteType::DocumentSymbol => 1,
+            PaletteType::Workspace => 1,
+            PaletteType::Command => 1,
+            PaletteType::GlobalSearch => 1,
+        };
+
+        if palette.cursor == start {
+            palette.input = "".to_string();
+            palette.cursor = 0;
+        } else {
+            palette.input.replace_range(start..palette.cursor, "");
+            palette.cursor = start;
+        }
+        self.update_palette(ctx);
+    }
+
+    pub fn next(&mut self, ctx: &mut EventCtx) {
+        let palette = Arc::make_mut(&mut self.palette);
+        palette.index =
+            Movement::Down.update_index(palette.index, palette.len(), 1, true);
+        palette.preview(ctx);
+    }
+
+    pub fn previous(&mut self, ctx: &mut EventCtx) {
+        let palette = Arc::make_mut(&mut self.palette);
+        palette.index =
+            Movement::Up.update_index(palette.index, palette.len(), 1, true);
+        palette.preview(ctx);
+    }
+
+    pub fn select(&mut self, ctx: &mut EventCtx) {
+        if self.palette.palette_type == PaletteType::Line {
+            let pattern = self.palette.get_input().to_string();
+            let find = Arc::make_mut(&mut self.find);
+            find.visual = true;
+            find.set_find(&pattern, false, false, false);
+            ctx.submit_command(Command::new(
+                LAPCE_UI_COMMAND,
+                LapceUICommand::UpdateSearch(pattern),
+                Target::Widget(*self.main_split.tab_id),
+            ));
+        }
+        let palette = Arc::make_mut(&mut self.palette);
+        if let Some(item) = palette.get_item() {
+            if let Some(palette_type) =
+                item.content.select(ctx, false, palette.preview_editor)
+            {
+                self.run(ctx, Some(palette_type));
+            } else {
+                self.cancel(ctx);
+            }
+        } else {
+            if self.palette.palette_type == PaletteType::SshHost {
+                let input = self.palette.get_input();
+                let splits = input.split('@').collect::<Vec<&str>>();
+                let mut splits = splits.iter().rev();
+                let host = splits.next().unwrap().to_string();
+                let user = splits
+                    .next()
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|| "root".to_string());
+                ctx.submit_command(Command::new(
+                    LAPCE_UI_COMMAND,
+                    LapceUICommand::SetWorkspace(LapceWorkspace {
+                        kind: LapceWorkspaceType::RemoteSSH(user, host),
+                        path: None,
+                        last_open: 0,
+                    }),
+                    Target::Auto,
+                ));
+                return;
+            }
+            self.cancel(ctx);
+        }
+    }
+
+    fn update_palette(&mut self, ctx: &mut EventCtx) {
+        let palette = Arc::make_mut(&mut self.palette);
+        palette.index = 0;
+        let palette_type = self.get_palette_type();
+        if self.palette.palette_type != palette_type {
+            self.run(ctx, Some(palette_type));
+            return;
+        }
+        if self.palette.get_input() != "" {
+            let _ = self.palette.sender.send((
+                self.palette.run_id.clone(),
+                self.palette.get_input().to_string(),
+                self.palette.items.clone(),
+            ));
+        } else {
+            self.palette.preview(ctx);
+        }
+    }
+
+    fn get_palette_type(&self) -> PaletteType {
+        match self.palette.palette_type {
+            PaletteType::Reference | PaletteType::SshHost => {
+                return self.palette.palette_type.clone();
+            }
+            _ => (),
+        }
+        if self.palette.input.is_empty() {
+            return PaletteType::File;
+        }
+        match self.palette.input {
+            _ if self.palette.input.starts_with('/') => PaletteType::Line,
+            _ if self.palette.input.starts_with('@') => PaletteType::DocumentSymbol,
+            _ if self.palette.input.starts_with('>') => PaletteType::Workspace,
+            _ if self.palette.input.starts_with(':') => PaletteType::Command,
+            _ => PaletteType::File,
+        }
+    }
+
+    fn get_files(&self, ctx: &mut EventCtx) {
+        let run_id = self.palette.run_id.clone();
+        let widget_id = self.palette.widget_id;
+        let workspace = self.workspace.clone();
+        let event_sink = ctx.get_external_handle();
+        self.palette.proxy.get_files(Box::new(move |result| {
+            if let Ok(res) = result {
+                let resp: Result<Vec<PathBuf>, serde_json::Error> =
+                    serde_json::from_value(res);
+                if let Ok(resp) = resp {
+                    let items: Vec<NewPaletteItem> = resp
+                        .iter()
+                        .enumerate()
+                        .map(|(_index, path)| {
+                            let full_path = path.clone();
+                            let mut path = path.clone();
+                            if let Some(workspace_path) = workspace.path.as_ref() {
+                                path = path
+                                    .strip_prefix(workspace_path)
+                                    .unwrap_or(&full_path)
+                                    .to_path_buf();
+                            }
+                            let filter_text =
+                                path.to_str().unwrap_or("").to_string();
+                            NewPaletteItem {
+                                content: PaletteItemContent::File(path, full_path),
+                                filter_text,
+                                score: 0,
+                                indices: Vec::new(),
+                            }
+                        })
+                        .collect();
+
+                    let _ = event_sink.submit_command(
+                        LAPCE_UI_COMMAND,
+                        LapceUICommand::UpdatePaletteItems(run_id, items),
+                        Target::Widget(widget_id),
+                    );
+                }
+            }
+        }));
+    }
+
+    #[allow(unused_variables)]
+    fn get_ssh_hosts(&mut self, ctx: &mut EventCtx) {
+        let workspaces = Config::recent_workspaces().unwrap_or_default();
+        let mut hosts = HashSet::new();
+        for workspace in workspaces.iter() {
+            if let LapceWorkspaceType::RemoteSSH(user, host) = &workspace.kind {
+                hosts.insert((user.to_string(), host.to_string()));
+            }
+        }
+
+        let palette = Arc::make_mut(&mut self.palette);
+        palette.items = hosts
+            .iter()
+            .map(|(user, host)| NewPaletteItem {
+                content: PaletteItemContent::SshHost(
+                    user.to_string(),
+                    host.to_string(),
+                ),
+                filter_text: format!("{user}@{host}"),
+                score: 0,
+                indices: vec![],
+            })
+            .collect();
+    }
+
+    #[allow(unused_variables)]
+    fn get_workspaces(&mut self, ctx: &mut EventCtx) {
+        let workspaces = Config::recent_workspaces().unwrap_or_default();
+        let palette = Arc::make_mut(&mut self.palette);
+        palette.items = workspaces
+            .into_iter()
+            .map(|w| {
+                let text = w
+                    .path
+                    .as_ref()
+                    .unwrap()
+                    .to_str()
+                    .map(|p| p.to_string())
+                    .unwrap();
+                let filter_text = match &w.kind {
+                    LapceWorkspaceType::Local => text,
+                    LapceWorkspaceType::RemoteSSH(user, host) => {
+                        format!("[{}@{}] {}", user, host, text)
+                    }
+                    LapceWorkspaceType::RemoteWSL => {
+                        format!("[wsl] {text}")
+                    }
+                };
+                NewPaletteItem {
+                    content: PaletteItemContent::Workspace(w),
+                    filter_text,
+                    score: 0,
+                    indices: vec![],
+                }
+            })
+            .collect();
+    }
+
+    #[allow(unused_variables)]
+    fn get_themes(&mut self, ctx: &mut EventCtx, config: &Config) {
+        let palette = Arc::make_mut(&mut self.palette);
+        palette.items = config
+            .themes
+            .keys()
+            .map(|n| NewPaletteItem {
+                content: PaletteItemContent::Theme(n.to_string()),
+                filter_text: n.to_string(),
+                score: 0,
+                indices: vec![],
+            })
+            .collect();
+    }
+
+    #[allow(unused_variables)]
+    fn get_commands(&mut self, ctx: &mut EventCtx) {
+        let palette = Arc::make_mut(&mut self.palette);
+        palette.items = self
+            .keypress
+            .commands
+            .iter()
+            .filter_map(|(_, c)| {
+                c.palette_desc.as_ref().map(|m| NewPaletteItem {
+                    content: PaletteItemContent::Command(c.clone()),
+                    filter_text: m.to_string(),
+                    score: 0,
+                    indices: vec![],
+                })
+            })
+            .collect();
+    }
+
+    #[allow(unused_variables)]
+    fn get_lines(&mut self, ctx: &mut EventCtx) {
+        if self.focus_area == FocusArea::Panel(PanelKind::Terminal) {
+            if let Some(terminal) =
+                self.terminal.terminals.get(&self.terminal.active_term_id)
+            {
+                let raw = terminal.raw.lock();
+                let term = &raw.term;
+                let mut items = Vec::new();
+                let mut last_row: Option<String> = None;
+                let mut current_line = term.topmost_line().0;
+                for line in term.topmost_line().0..term.bottommost_line().0 {
+                    let row = &term.grid()[alacritty_terminal::index::Line(line)];
+                    let mut row_str = (0..row.len())
+                        .map(|i| &row[alacritty_terminal::index::Column(i)])
+                        .map(|c| c.c)
+                        .join("");
+                    if let Some(last_row) = last_row.as_ref() {
+                        row_str = last_row.to_string() + &row_str;
+                    } else {
+                        current_line = line;
+                    }
+                    if row
+                        .last()
+                        .map(|c| c.flags.contains(Flags::WRAPLINE))
+                        .unwrap_or(false)
+                    {
+                        last_row = Some(row_str.clone());
+                    } else {
+                        last_row = None;
+                        let item = NewPaletteItem {
+                            content: PaletteItemContent::TerminalLine(
+                                current_line,
+                                row_str.clone(),
+                            ),
+                            filter_text: row_str,
+                            score: 0,
+                            indices: vec![],
+                        };
+                        items.push(item);
+                    }
+                }
+                let palette = Arc::make_mut(&mut self.palette);
+                palette.items = items;
+            }
+            return;
+        }
+        let editor = self.main_split.active_editor();
+        let editor = match editor {
+            Some(editor) => editor,
+            None => return,
+        };
+
+        let buffer = self.main_split.editor_buffer(editor.view_id);
+        let last_line_number = buffer.last_line() + 1;
+        let last_line_number_len = last_line_number.to_string().len();
+        let palette = Arc::make_mut(&mut self.palette);
+        palette.items = buffer
+            .rope
+            .lines(0..buffer.len())
+            .enumerate()
+            .map(|(i, l)| {
+                let line_number = i + 1;
+                let text = format!(
+                    "{}{} {}",
+                    vec![" "; last_line_number_len - line_number.to_string().len()]
+                        .join(""),
+                    line_number,
+                    l
+                );
+                NewPaletteItem {
+                    content: PaletteItemContent::Line(line_number, text.clone()),
+                    filter_text: text,
+                    score: 0,
+                    indices: vec![],
+                }
+            })
+            .collect();
+    }
+
+    #[allow(unused_variables)]
+    fn get_global_search(&mut self, ctx: &mut EventCtx) {}
+
+    fn get_document_symbols(&mut self, ctx: &mut EventCtx) {
+        let editor = self.main_split.active_editor();
+        let editor = match editor {
+            Some(editor) => editor,
+            None => return,
+        };
+
+        let widget_id = self.palette.widget_id;
+
+        if let BufferContent::File(path) = &editor.content {
+            let path = path.clone();
+            let buffer_id = self.main_split.open_files.get(&path).unwrap().id;
+            let run_id = self.palette.run_id.clone();
+            let event_sink = ctx.get_external_handle();
+
+            self.palette.proxy.get_document_symbols(
+                buffer_id,
+                Box::new(move |result| {
+                    if let Ok(res) = result {
+                        let resp: Result<DocumentSymbolResponse, serde_json::Error> =
+                            serde_json::from_value(res);
+                        if let Ok(resp) = resp {
+                            let items: Vec<NewPaletteItem> = match resp {
+                                DocumentSymbolResponse::Flat(symbols) => symbols
+                                    .iter()
+                                    .map(|s| {
+                                        let mut filter_text = s.name.clone();
+                                        if let Some(container_name) =
+                                            s.container_name.as_ref()
+                                        {
+                                            filter_text += container_name;
+                                        }
+                                        NewPaletteItem {
+                                            content:
+                                                PaletteItemContent::DocumentSymbol {
+                                                    kind: s.kind,
+                                                    name: s.name.clone(),
+                                                    range: s.location.range,
+                                                    container_name: s
+                                                        .container_name
+                                                        .clone(),
+                                                },
+                                            filter_text,
+                                            score: 0,
+                                            indices: Vec::new(),
+                                        }
+                                    })
+                                    .collect(),
+                                DocumentSymbolResponse::Nested(symbols) => symbols
+                                    .iter()
+                                    .map(|s| NewPaletteItem {
+                                        content:
+                                            PaletteItemContent::DocumentSymbol {
+                                                kind: s.kind,
+                                                name: s.name.clone(),
+                                                range: s.range,
+                                                container_name: None,
+                                            },
+                                        filter_text: s.name.clone(),
+                                        score: 0,
+                                        indices: Vec::new(),
+                                    })
+                                    .collect(),
+                            };
+                            let _ = event_sink.submit_command(
+                                LAPCE_UI_COMMAND,
+                                LapceUICommand::UpdatePaletteItems(run_id, items),
+                                Target::Widget(widget_id),
+                            );
+                        }
+                    }
+                }),
+            );
+        }
+    }
+
+    pub fn update_process(
+        receiver: Receiver<(String, String, Vec<NewPaletteItem>)>,
+        widget_id: WidgetId,
+        event_sink: ExtEventSink,
+    ) {
+        fn receive_batch(
+            receiver: &Receiver<(String, String, Vec<NewPaletteItem>)>,
+        ) -> Result<(String, String, Vec<NewPaletteItem>)> {
+            let (mut run_id, mut input, mut items) = receiver.recv()?;
+            loop {
+                match receiver.try_recv() {
+                    Ok(update) => {
+                        run_id = update.0;
+                        input = update.1;
+                        items = update.2;
+                    }
+                    Err(TryRecvError::Empty) => break,
+                    Err(TryRecvError::Disconnected) => break,
+                }
+            }
+            Ok((run_id, input, items))
+        }
+
+        let matcher = SkimMatcherV2::default().ignore_case();
+        loop {
+            if let Ok((run_id, input, items)) = receive_batch(&receiver) {
+                let filtered_items =
+                    Self::filter_items(&run_id, &input, items, &matcher);
+
+                let _ = event_sink.submit_command(
+                    LAPCE_UI_COMMAND,
+                    LapceUICommand::FilterPaletteItems(
+                        run_id,
+                        input,
+                        filtered_items,
+                    ),
+                    Target::Widget(widget_id),
+                );
+            } else {
+                return;
+            }
+        }
+    }
+
+    #[allow(unused_variables)]
+    fn filter_items(
+        run_id: &str,
+        input: &str,
+        items: Vec<NewPaletteItem>,
+        matcher: &SkimMatcherV2,
+    ) -> Vec<NewPaletteItem> {
+        let mut items: Vec<NewPaletteItem> = items
+            .iter()
+            .filter_map(|i| {
+                if let Some((score, indices)) =
+                    matcher.fuzzy_indices(&i.filter_text, input)
+                {
+                    let mut item = i.clone();
+                    item.score = score;
+                    item.indices = indices;
+                    Some(item)
+                } else {
+                    None
+                }
+            })
+            .collect();
+        items
+            .sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(Ordering::Less));
+        items
+    }
+}
+
+fn file_paint_items(
+    path: &Path,
+    indices: &[usize],
+) -> (Option<Svg>, String, Vec<usize>, String, Vec<usize>) {
+    let svg = file_svg_new(path);
+    let file_name = path
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("")
+        .to_string();
+    let folder = path
+        .parent()
+        .and_then(|s| s.to_str())
+        .unwrap_or("")
+        .to_string();
+    let folder_len = folder.len();
+    let text_indices: Vec<usize> = indices
+        .iter()
+        .filter_map(|i| {
+            let i = *i;
+            if folder_len > 0 {
+                if i > folder_len {
+                    Some(i - folder_len - 1)
+                } else {
+                    None
+                }
+            } else {
+                Some(i)
+            }
+        })
+        .collect();
+    let hint_indices: Vec<usize> = indices
+        .iter()
+        .filter_map(|i| {
+            let i = *i;
+            if i < folder_len {
+                Some(i)
+            } else {
+                None
+            }
+        })
+        .collect();
+    (Some(svg), file_name, text_indices, folder, hint_indices)
+}
+
+pub fn svg_tree_size(svg_tree: &usvg::Tree) -> Size {
+    match *svg_tree.root().borrow() {
+        usvg::NodeKind::Svg(svg) => Size::new(svg.size.width(), svg.size.height()),
+        _ => Size::ZERO,
+    }
+}

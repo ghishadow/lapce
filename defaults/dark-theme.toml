@@ -57,8 +57,11 @@ magenta = "#C678DD"
 "completion.background" = "#21252B"
 "completion.current" = "#2C313A"
 
+"hover.background" = "#21252B"
+
 "panel.background" = "#21252B"
 "panel.current" = "#2C313A"
+"panel.hovered" = "#343A45"
 
 "status.background" = "#21252B"
 
@@ -66,11 +69,14 @@ magenta = "#C678DD"
 
 "style.constant" = "$yellow"
 "style.type" = "$yellow"
+"style.typeAlias" = "$yellow"
 "style.number" = "$yellow"
 "style.enum" = "$yellow"
 "style.struct" = "$yellow"
 "style.structure" = "$yellow"
 "style.interface" = "$yellow"
+"style.attribute" = "$yellow"
+"style.constructor" = "$yellow"
 
 "style.function" = "$blue"
 "style.method" = "$blue"
@@ -89,3 +95,5 @@ magenta = "#C678DD"
 
 "style.type.builtin" = "$cyan"
 "style.builtinType" = "$cyan"
+"style.escape" = "$cyan"
+"style.embedded" = "$cyan"

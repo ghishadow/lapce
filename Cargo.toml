@@ -1,25 +1,25 @@
 [package]
 name = "lapce"
-version = "0.0.8"
+version = "0.0.12"
 authors = ["Dongdong Zhou <dzhou121@gmail.com>"]
 edition = "2021"
+rust-version = "1.58"
 resolver = "2"
 
 [dependencies]
-lapce-core = { path = "./core" }
-lapce-proxy = { path = "./proxy" }
+lapce-ui = { path = "./lapce-ui" }
+lapce-proxy = { path = "./lapce-proxy" }
 
 [[bin]]
 name = "lapce"
-path = "core/src/bin/lapce.rs"
+path = "lapce-ui/src/bin/lapce.rs"
 
 [[bin]]
 name = "lapce-proxy"
-path = "proxy/src/bin/lapce-proxy.rs"
+path = "lapce-proxy/src/bin/lapce-proxy.rs"
 
 [workspace]
-members = ["core", "proxy", "rpc"]
-
+members = ["lapce-ui", "lapce-proxy", "lapce-rpc", "lapce-data", "lapce-core"]
 [profile.dev]
 split-debuginfo = "unpacked"
 
@@ -27,3 +27,4 @@ split-debuginfo = "unpacked"
 codegen-units = 1
 lto = "thin"
 # debug = true
+
