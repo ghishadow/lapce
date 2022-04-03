@@ -26,5 +26,7 @@ split-debuginfo = "unpacked"
 [profile.release]
 codegen-units = 1
 lto = "thin"
+opt-level = "s" # Optimize for size
+strip = "debuginfo"
 # debug = true
 
