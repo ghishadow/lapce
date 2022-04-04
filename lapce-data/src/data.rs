@@ -11,7 +11,7 @@ use std::{
 use anyhow::{anyhow, Result};
 use crossbeam_channel::{unbounded, Receiver, Sender};
 use druid::{
-    piet::{PietText, PietTextLayout, Svg, Text, TextLayout, TextLayoutBuilder},
+    piet::{PietText, PietTextLayout, Text, TextLayout, TextLayoutBuilder},
     theme, Color, Command, Data, Env, EventCtx, ExtEventSink, FontFamily, Lens,
     Point, Rect, Size, Target, Vec2, WidgetId, WindowId,
 };
@@ -61,7 +61,6 @@ use crate::{
     source_control::SourceControlData,
     split::{SplitDirection, SplitMoveDirection},
     state::{LapceWorkspace, LapceWorkspaceType, VisualMode},
-    svg::get_svg,
     terminal::TerminalSplitData,
 };
 
@@ -315,19 +314,15 @@ pub enum PanelKind {
 }
 
 impl PanelKind {
-    pub fn svg_name(&self) -> String {
+    pub fn svg_name(&self) -> &'static str {
         match &self {
-            PanelKind::FileExplorer => "file-explorer.svg".to_string(),
-            PanelKind::SourceControl => "git-icon.svg".to_string(),
-            PanelKind::Plugin => "plugin-icon.svg".to_string(),
-            PanelKind::Terminal => "terminal.svg".to_string(),
-            PanelKind::Search => "search.svg".to_string(),
-            PanelKind::Problem => "error.svg".to_string(),
+            PanelKind::FileExplorer => "file-explorer.svg",
+            PanelKind::SourceControl => "git-icon.svg",
+            PanelKind::Plugin => "plugin-icon.svg",
+            PanelKind::Terminal => "terminal.svg",
+            PanelKind::Search => "search.svg",
+            PanelKind::Problem => "error.svg",
         }
-    }
-
-    pub fn svg(&self) -> Svg {
-        get_svg(&self.svg_name()).unwrap()
     }
 }
 

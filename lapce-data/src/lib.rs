@@ -28,7 +28,5 @@ pub mod signature;
 pub mod source_control;
 pub mod split;
 pub mod state;
-pub mod svg;
 pub mod terminal;
-pub mod theme;
 pub mod window;

@@ -13,7 +13,10 @@ use lapce_data::{
     state::Mode,
 };
 
-use crate::{svg::get_svg, tab::LapceIcon};
+use crate::{
+    svg::get_svg, 
+    tab::LapceIcon,
+};
 
 pub struct LapceStatusNew {
     height: f64,
@@ -69,7 +72,7 @@ impl LapceStatusNew {
                 };
 
                 LapceIcon {
-                    icon: p.svg_name(),
+                    icon: p.svg_name().to_string(),
                     rect: Size::new(self_size.height, self_size.height)
                         .to_rect()
                         .with_origin(Point::new(

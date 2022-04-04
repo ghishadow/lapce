@@ -18,10 +18,9 @@ use lapce_data::{
     proxy::ProxyStatus,
     state::LapceWorkspaceType,
 };
+use crate::svg::get_svg;
 use serde_json::json;
 use strum::EnumMessage;
-
-use crate::svg::get_svg;
 
 pub struct Title {
     mouse_pos: Point,
