@@ -16,8 +16,10 @@ use lapce_data::{
     editor::TabRect,
 };
 
-use crate::editor::tab::TabRectRenderer;
-use crate::svg::{file_svg_new, get_svg};
+use crate::{
+    editor::tab::TabRectRenderer,
+    svg::{file_svg_new, get_svg},
+};
 
 pub struct LapceEditorTabHeaderContent {
     pub widget_id: WidgetId,
@@ -87,6 +89,17 @@ impl LapceEditorTabHeaderContent {
                         editor_tab.children[i].clone(),
                         tab_rect.clone(),
                     ),
+                ));
+                return;
+            }
+
+            if mouse_event.button.is_middle()
+                && tab_rect.rect.contains(mouse_event.pos)
+            {
+                ctx.submit_command(Command::new(
+                    LAPCE_UI_COMMAND,
+                    LapceUICommand::EditorTabRemove(i, true, true),
+                    Target::Widget(self.widget_id),
                 ));
                 return;
             }
