@@ -1098,20 +1098,13 @@ impl Buffer {
         mode: Mode,
         modify: bool,
         code_lens: bool,
-        compare: Option<String>,
+        compare: Option<&str>,
         config: &Config,
     ) -> Selection {
         let mut new_selection = Selection::new();
         for region in selection.regions() {
             let region = self.update_region(
-                region,
-                count,
-                movement,
-                mode,
-                modify,
-                code_lens,
-                compare.clone(),
-                config,
+                region, count, movement, mode, modify, code_lens, compare, config,
             );
             new_selection.add_region(region);
         }
@@ -1127,7 +1120,7 @@ impl Buffer {
         mode: Mode,
         modify: bool,
         code_lens: bool,
-        compare: Option<String>,
+        compare: Option<&str>,
         config: &Config,
     ) -> SelRegion {
         let (end, horiz) = self.move_offset(
@@ -1343,7 +1336,7 @@ impl Buffer {
         movement: &Movement,
         mode: Mode,
         code_lens: bool,
-        compare: Option<String>,
+        compare: Option<&str>,
         config: &Config,
     ) -> (usize, ColPosition) {
         let horiz = if let Some(horiz) = horiz {
@@ -1389,13 +1382,9 @@ impl Buffer {
                 let line = self.line_of_offset(offset);
                 let line = if line == 0 {
                     0
-                } else if let Some(compare) = compare.as_ref() {
+                } else if let Some(compare) = compare {
                     let cursor_line = self.diff_cursor_line(compare, line);
-                    let cursor_line = if cursor_line > count {
-                        cursor_line - count
-                    } else {
-                        0
-                    };
+                    let cursor_line = cursor_line.saturating_sub(count);
                     self.diff_actual_line(compare, cursor_line)
                 } else if code_lens && count == 1 {
                     let empty_lens = Syntax::lens_from_normal_lines(
@@ -1404,17 +1393,14 @@ impl Buffer {
                         config.editor.code_lens_font_size,
                         &[],
                     );
-                    let lens = if let Some(syntax) = self.syntax.as_ref() {
-                        &syntax.lens
-                    } else {
-                        &empty_lens
-                    };
-                    let mut line = line - 1;
-                    loop {
-                        if line == 0 {
-                            break;
-                        }
 
+                    let lens = self
+                        .syntax
+                        .as_ref()
+                        .map_or(&empty_lens, |syntax| &syntax.lens);
+
+                    let mut line = line - 1;
+                    while line != 0 {
                         let line_height = lens.height_of_line(line + 1)
                             - lens.height_of_line(line);
                         if line_height == config.editor.line_height {
@@ -1423,10 +1409,8 @@ impl Buffer {
                         line -= 1;
                     }
                     line
-                } else if line > count {
-                    line - count
                 } else {
-                    0
+                    line.saturating_sub(count)
                 };
 
                 let col = self.line_horiz_col(
@@ -1443,7 +1427,7 @@ impl Buffer {
                 let last_line = self.last_line();
                 let line = self.line_of_offset(offset);
 
-                let line = if let Some(compare) = compare.as_ref() {
+                let line = if let Some(compare) = compare {
                     let cursor_line = self.diff_cursor_line(compare, line);
                     let cursor_line = cursor_line + count;
 
@@ -1455,17 +1439,12 @@ impl Buffer {
                         config.editor.code_lens_font_size,
                         &[],
                     );
-                    let lens = if let Some(syntax) = self.syntax.as_ref() {
-                        &syntax.lens
-                    } else {
-                        &empty_lens
-                    };
+                    let lens = self
+                        .syntax
+                        .as_ref()
+                        .map_or(&empty_lens, |syntax| &syntax.lens);
                     let mut line = (line + 1).min(last_line);
-                    loop {
-                        if line == last_line {
-                            break;
-                        }
-
+                    while line != last_line {
                         let line_height = lens.height_of_line(line + 1)
                             - lens.height_of_line(line);
                         if line_height == config.editor.line_height {
@@ -1475,13 +1454,7 @@ impl Buffer {
                     }
                     line
                 } else {
-                    let line = line + count;
-
-                    if line > last_line {
-                        last_line
-                    } else {
-                        line
-                    }
+                    (line + count).min(last_line)
                 };
 
                 let col = self.line_horiz_col(
@@ -1516,14 +1489,7 @@ impl Buffer {
             }
             Movement::Line(position) => {
                 let line = match position {
-                    LinePosition::Line(line) => {
-                        let line = line - 1;
-                        let last_line = self.last_line();
-                        match line {
-                            n if n > last_line => last_line,
-                            n => n,
-                        }
-                    }
+                    LinePosition::Line(line) => (line - 1).min(self.last_line()),
                     LinePosition::First => 0,
                     LinePosition::Last => self.last_line(),
                 };
@@ -1581,12 +1547,9 @@ impl Buffer {
                         self.offset_to_line_col(new_offset, config.editor.tab_width);
                     (new_offset, ColPosition::Col(col))
                 } else {
-                    let new_offset = match WordCursor::new(&self.rope, offset)
+                    let new_offset = WordCursor::new(&self.rope, offset)
                         .next_unmatched(*c)
-                    {
-                        Some(new_offset) => new_offset - 1,
-                        None => offset,
-                    };
+                        .map_or(offset, |new| new - 1);
                     let (_, col) =
                         self.offset_to_line_col(new_offset, config.editor.tab_width);
                     (new_offset, ColPosition::Col(col))

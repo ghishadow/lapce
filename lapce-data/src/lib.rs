@@ -1,5 +1,4 @@
 pub mod buffer;
-pub mod code_action;
 pub mod command;
 pub mod completion;
 pub mod config;
@@ -29,4 +28,3 @@ pub mod source_control;
 pub mod split;
 pub mod state;
 pub mod terminal;
-pub mod window;
