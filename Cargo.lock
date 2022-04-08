@@ -1869,6 +1869,7 @@ dependencies = [
  "tree-sitter-highlight",
  "tree-sitter-javascript",
  "tree-sitter-json",
+ "tree-sitter-nix",
  "tree-sitter-php",
  "tree-sitter-python",
  "tree-sitter-rust",
@@ -4134,6 +4135,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "tree-sitter-nix"
+version = "0.0.1"
+source = "git+https://github.com/ghishadow/tree-sitter-nix.git#4f398cb7c3666e9ecbb14a4f3606149d5bc65155"
+dependencies = [
+ "cc",
+ "tree-sitter",
+]
+
+[[package]]
 name = "tree-sitter-php"
 version = "0.19.1"
 source = "git+https://github.com/tree-sitter/tree-sitter-php.git#ead3e4cc5f54602a6b54826c5d6881c9a9da15af"
@@ -4174,9 +4184,9 @@ dependencies = [
 
 [[package]]
 name = "tree-sitter-typescript"
-version = "0.20.0"
+version = "0.20.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8935efd97c92067c9b2b6d7acb647607590996ba80f3a7be09a197f9c1fdab73"
+checksum = "4e8ed0ecb931cdff13c6a13f45ccd615156e2779d9ffb0395864e05505e6e86d"
 dependencies = [
  "cc",
  "tree-sitter",
