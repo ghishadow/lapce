@@ -15,11 +15,10 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v3
-      - id: mold
+      - uses: actions/checkout@v2
       - uses: rui314/setup-mold@v1
-      - run: echo "molding"
-        shell: bash
+        with:
+          make-default: false
       - name: Install dependencies
         run: |
           sudo apt-get install cmake pkg-config libfreetype6-dev libfontconfig1-dev \
