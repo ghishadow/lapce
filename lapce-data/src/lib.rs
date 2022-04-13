@@ -1,5 +1,4 @@
 pub mod buffer;
-pub mod code_action;
 pub mod command;
 pub mod completion;
 pub mod config;
@@ -21,7 +20,6 @@ pub mod picker;
 pub mod plugin;
 pub mod problem;
 pub mod proxy;
-pub mod scroll;
 pub mod search;
 pub mod settings;
 pub mod signature;
@@ -29,4 +27,3 @@ pub mod source_control;
 pub mod split;
 pub mod state;
 pub mod terminal;
-pub mod window;

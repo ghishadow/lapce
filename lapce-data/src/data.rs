@@ -8,11 +8,11 @@ use std::{
     thread,
 };
 
-use anyhow::{anyhow, Result};
+use anyhow::Result;
 use crossbeam_channel::{unbounded, Receiver, Sender};
 use druid::{
     piet::{PietText, PietTextLayout, Text, TextLayout, TextLayoutBuilder},
-    theme, Color, Command, Data, Env, EventCtx, ExtEventSink, FontFamily, Lens,
+    theme, Command, Data, Env, EventCtx, ExtEventSink, FontFamily, Lens,
     Point, Rect, Size, Target, Vec2, WidgetId, WindowId,
 };
 
@@ -30,8 +30,8 @@ use xi_rope::{RopeDelta, Transformer};
 
 use crate::{
     buffer::{
-        matching_char, matching_pair_direction, Buffer, BufferContent, EditType,
-        LocalBufferKind,
+        data::BufferData, matching_char, matching_pair_direction, Buffer,
+        BufferContent, EditType, LocalBufferKind,
     },
     command::{
         CommandTarget, EnsureVisiblePosition, LapceCommandNew, LapceUICommand,
@@ -755,7 +755,7 @@ impl LapceTabData {
                 .insert(editor.view_id, editor_buffer_data.editor);
         }
         if !editor_buffer_data.buffer.same(buffer) {
-            match &buffer.content {
+            match buffer.content() {
                 BufferContent::File(path) => {
                     self.main_split
                         .open_files
@@ -801,7 +801,7 @@ impl LapceTabData {
                 let offset = editor.cursor.offset();
                 let (line, col) =
                     buffer.offset_to_line_col(offset, self.config.editor.tab_width);
-                let width = config.editor_text_width(text, "W");
+                let width = config.editor_char_width(text);
                 let x = col as f64 * width;
                 let y = (line + 1) as f64 * line_height;
 
@@ -836,7 +836,7 @@ impl LapceTabData {
                 let offset = self.completion.offset;
                 let (line, col) =
                     buffer.offset_to_line_col(offset, self.config.editor.tab_width);
-                let width = config.editor_text_width(text, "W");
+                let width = config.editor_char_width(text);
                 let x = col as f64 * width - line_height - 5.0;
                 let y = (line + 1) as f64 * line_height;
                 let mut origin = editor.window_origin - self.window_origin.to_vec2()
@@ -889,7 +889,7 @@ impl LapceTabData {
                 let offset = self.hover.offset;
                 let (line, col) =
                     buffer.offset_to_line_col(offset, self.config.editor.tab_width);
-                let width = config.editor_text_width(text, "W");
+                let width = config.editor_char_width(text);
                 let x = col as f64 * width - line_height - 5.0;
                 let y = (line + 1) as f64 * line_height;
                 let mut origin = editor.window_origin - self.window_origin.to_vec2()
@@ -1374,7 +1374,7 @@ impl LapceTabData {
                     .local_buffers
                     .get_mut(&LocalBufferKind::SourceControl)
                     .unwrap();
-                let message = buffer.rope.to_string();
+                let message = buffer.rope().to_string();
                 let message = message.trim();
                 if message.is_empty() {
                     return;
@@ -1905,7 +1905,7 @@ impl LapceMainSplitData {
         config: &Config,
     ) {
         let buffer = self.open_files.get(path).unwrap();
-        if buffer.rev != rev {
+        if buffer.rev() != rev {
             return;
         }
 
@@ -1959,8 +1959,8 @@ impl LapceMainSplitData {
         self.document_format(path, rev, result, config);
 
         let buffer = self.open_files.get(path).unwrap();
-        let rev = buffer.rev;
-        let buffer_id = buffer.id;
+        let rev = buffer.rev();
+        let buffer_id = buffer.id();
         let event_sink = ctx.get_external_handle();
         let path = PathBuf::from(path);
         self.proxy.save(
@@ -2061,7 +2061,9 @@ impl LapceMainSplitData {
             }
         }
 
-        let delta = Arc::make_mut(buffer).edit_multiple(edits, proxy, edit_type);
+        let delta = Arc::make_mut(buffer)
+            .editable(&proxy)
+            .edit_multiple(edits, edit_type);
         if move_cursor {
             self.cursor_apply_delta(path, &delta);
         }
@@ -2312,7 +2314,7 @@ impl LapceMainSplitData {
             Some(location.path.clone()),
             config,
         );
-        editor.save_jump_location(&buffer, config.editor.tab_width);
+        editor.save_jump_location(buffer.data(), config.editor.tab_width);
         self.go_to_location(ctx, Some(editor_view_id), location, config);
         editor_view_id
     }
@@ -2333,7 +2335,7 @@ impl LapceMainSplitData {
             )
             .view_id;
         let buffer = self.editor_buffer(editor_view_id);
-        let new_buffer = match &buffer.content {
+        let new_buffer = match buffer.content() {
             BufferContent::File(path) => path != &location.path,
             BufferContent::Local(_) => true,
             BufferContent::Value(_) => true,
@@ -2387,7 +2389,7 @@ impl LapceMainSplitData {
             };
 
             if let Some(compare) = location.history.as_ref() {
-                if !buffer.histories.contains_key(compare) {
+                if !buffer.histories().contains_key(compare) {
                     buffer.retrieve_file_head(
                         *self.tab_id,
                         self.proxy.clone(),
@@ -3069,8 +3071,8 @@ impl LapceEditorData {
         placeholders.extend_from_slice(&v[1..]);
     }
 
-    pub fn save_jump_location(&mut self, buffer: &Buffer, tab_width: usize) {
-        if let BufferContent::File(path) = &buffer.content {
+    pub fn save_jump_location(&mut self, buffer: &BufferData, tab_width: usize) {
+        if let BufferContent::File(path) = buffer.content() {
             let location = EditorLocationNew {
                 path: path.clone(),
                 position: Some(
@@ -3096,38 +3098,6 @@ impl LapceEditorData {
             },
         };
         info
-    }
-}
-
-pub fn hex_to_color(hex: &str) -> Result<Color> {
-    let hex = hex.trim_start_matches('#');
-    match hex.len() {
-        // The 3-digit CSS-like form, where #RGB is shorthand for #RRGGBB.
-        3 => {
-            let r = u8::from_str_radix(&hex[0..1], 16)?;
-            let r = r * 16 + r;
-            let g = u8::from_str_radix(&hex[1..2], 16)?;
-            let g = g * 16 + g;
-            let b = u8::from_str_radix(&hex[2..3], 16)?;
-            let b = b * 16 + b;
-            Ok(Color::rgba8(r, g, b, 255))
-        }
-        // The standard form #RRGGBB.
-        6 => {
-            let r = u8::from_str_radix(&hex[0..2], 16)?;
-            let g = u8::from_str_radix(&hex[2..4], 16)?;
-            let b = u8::from_str_radix(&hex[4..6], 16)?;
-            Ok(Color::rgba8(r, g, b, 255))
-        }
-        // The standard form #RRGGBBAA (alpha channel).
-        8 => {
-            let r = u8::from_str_radix(&hex[0..2], 16)?;
-            let g = u8::from_str_radix(&hex[2..4], 16)?;
-            let b = u8::from_str_radix(&hex[4..6], 16)?;
-            let a = u8::from_str_radix(&hex[6..8], 16)?;
-            Ok(Color::rgba8(r, g, b, a))
-        }
-        _ => Err(anyhow!("invalid hex color")),
     }
 }
 
@@ -3162,77 +3132,3 @@ fn str_matching_pair(c: &str) -> Option<char> {
 
 #[allow(dead_code)]
 fn progress_term_event() {}
-
-#[cfg(test)]
-mod hex_to_color_tests {
-    use super::hex_to_color;
-    use druid::piet::Color;
-
-    #[test]
-    pub fn hex_to_color_for_invalid_inputs() {
-        assert!(hex_to_color("").is_err());
-        assert!(hex_to_color(" ").is_err());
-        assert!(hex_to_color("#").is_err());
-        assert!(hex_to_color("11").is_err());
-        assert!(hex_to_color("11 ").is_err());
-        assert!(hex_to_color(" 11 ").is_err());
-        assert!(hex_to_color("1 1").is_err());
-        assert!(hex_to_color("#1").is_err());
-        assert!(hex_to_color("#11").is_err());
-        assert!(hex_to_color("#11Z").is_err());
-        assert!(hex_to_color("#1234").is_err());
-        assert!(hex_to_color("#12345").is_err());
-        assert!(hex_to_color("#12345Z").is_err());
-        assert!(hex_to_color("#1234567").is_err());
-        assert!(hex_to_color("#1234567Z").is_err());
-        assert!(hex_to_color("#123456789").is_err());
-    }
-
-    #[test]
-    pub fn hex_to_color_for_valid_3_digit_colors() {
-        assert_eq!(
-            hex_to_color("#123").unwrap(),
-            Color::rgba8(0x11, 0x22, 0x33, 255)
-        );
-        assert_eq!(
-            hex_to_color("#a2f").unwrap(),
-            Color::rgba8(0xAA, 0x22, 0xFF, 255)
-        );
-        assert_eq!(
-            hex_to_color("#A2F").unwrap(),
-            Color::rgba8(0xAA, 0x22, 0xFF, 255)
-        );
-    }
-
-    #[test]
-    pub fn hex_to_color_for_valid_6_digit_colors() {
-        assert_eq!(
-            hex_to_color("#112233").unwrap(),
-            Color::rgba8(0x11, 0x22, 0x33, 255)
-        );
-        assert_eq!(
-            hex_to_color("#Da2e1f").unwrap(),
-            Color::rgba8(0xDA, 0x2E, 0x1F, 255)
-        );
-        assert_eq!(
-            hex_to_color("#A0020F").unwrap(),
-            Color::rgba8(0xA0, 0x02, 0x0F, 255)
-        );
-    }
-
-    #[test]
-    pub fn hex_to_color_for_valid_8_digit_colors() {
-        assert_eq!(
-            hex_to_color("#11223300").unwrap(),
-            Color::rgba8(0x11, 0x22, 0x33, 0x00)
-        );
-        assert_eq!(
-            hex_to_color("#Da2e1faf").unwrap(),
-            Color::rgba8(0xDA, 0x2E, 0x1F, 0xAF)
-        );
-        assert_eq!(
-            hex_to_color("#A0020FFF").unwrap(),
-            Color::rgba8(0xA0, 0x02, 0x0F, 0xFF)
-        );
-    }
-}
