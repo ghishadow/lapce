@@ -16,14 +16,12 @@ jobs:
 
     steps:
       - uses: actions/checkout@v2
+      - id: mold
+      - uses: rui314/setup-mold@v1
       - name: Install dependencies
         run: |
           sudo apt-get install cmake pkg-config libfreetype6-dev libfontconfig1-dev \
             libxcb-xfixes0-dev libxkbcommon-dev
-      - run: wget -O- --quiet https://github.com/rui314/mold/releases/download/v${{ inputs.mold-version }}/mold-${{ inputs.mold-version }}-$(uname -m)-linux.tar.gz | sudo tar -C /usr/local --strip-components=1 -xzf -
-        shell: bash
-      - run: sudo ln -sf /usr/bin/mold $(realpath /usr/bin/ld)
-        shell: bash
       - name: Update rust
         run: rustup update
       - name: Build
