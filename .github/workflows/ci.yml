@@ -17,7 +17,6 @@ jobs:
     steps:
       - uses: actions/checkout@v2
         if: startsWith(matrix.os, 'ubuntu')
-      - uses: rui314/setup-mold@v1
       - name: Install dependencies on Ubuntu
         if: startsWith(matrix.os, 'ubuntu')
         run: sudo apt-get install cmake pkg-config libfreetype6-dev libfontconfig1-dev libxcb-xfixes0-dev libxkbcommon-dev
