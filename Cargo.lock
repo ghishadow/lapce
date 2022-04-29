@@ -1243,7 +1243,7 @@ dependencies = [
 [[package]]
 name = "fount"
 version = "0.1.0"
-source = "git+https://github.com/lapce/fount#6061637d1005ef0be6b51a16d29772c35307f6c7"
+source = "git+https://github.com/lapce/fount#a28c1415d105ea40989b281258686164a8968ddc"
 dependencies = [
  "memmap2 0.5.3",
  "swash",
@@ -1359,6 +1359,15 @@ checksum = "501466ecc8a30d1d3b7fc9229b122b2ce8ed6e9d9223f1138d4babb253e51817"
 dependencies = [
  "typenum",
  "version_check",
+]
+
+[[package]]
+name = "getopts"
+version = "0.2.21"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "14dbbfd5c71d70241ecf9e6f13737f7b5ce823821063188d7e46c41d371eebd5"
+dependencies = [
+ "unicode-width",
 ]
 
 [[package]]
@@ -1905,6 +1914,7 @@ dependencies = [
  "tree-sitter-java",
  "tree-sitter-javascript",
  "tree-sitter-json",
+ "tree-sitter-md",
  "tree-sitter-php",
  "tree-sitter-python",
  "tree-sitter-ruby",
@@ -1925,7 +1935,6 @@ dependencies = [
  "bit-vec",
  "bitflags",
  "bytemuck",
- "cc",
  "chrono",
  "config",
  "crossbeam-channel",
@@ -1951,6 +1960,7 @@ dependencies = [
  "lsp-types",
  "notify 5.0.0-pre.13",
  "parking_lot",
+ "pulldown-cmark",
  "rayon",
  "regex",
  "serde 1.0.130",
@@ -1960,7 +1970,6 @@ dependencies = [
  "strum",
  "strum_macros",
  "thiserror",
- "threadpool",
  "tinyfiledialogs",
  "toml",
  "unicode-segmentation",
@@ -2028,7 +2037,6 @@ dependencies = [
  "anyhow",
  "base64",
  "bit-vec",
- "cc",
  "chrono",
  "config",
  "crossbeam-channel",
@@ -2061,7 +2069,6 @@ dependencies = [
  "structdesc",
  "strum",
  "strum_macros",
- "threadpool",
  "tinyfiledialogs",
  "toml",
  "unicode-segmentation",
@@ -2897,7 +2904,7 @@ dependencies = [
 [[package]]
 name = "parley"
 version = "0.1.0"
-source = "git+https://github.com/lapce/parley#d9ad6158172da121a0143e5637a65a28d9fd98c6"
+source = "git+https://github.com/lapce/parley#bb096b6c30d33c9d5fba2851e8fd6a41523d8ae1"
 dependencies = [
  "fount",
  "swash",
@@ -2966,7 +2973,7 @@ dependencies = [
 [[package]]
 name = "piet-wgpu"
 version = "0.1.0"
-source = "git+https://github.com/lapce/piet-wgpu?branch=opengl#a714562a071a9ed0b4c9b04517d0988c20b3944f"
+source = "git+https://github.com/lapce/piet-wgpu?branch=opengl#7a11a481a24e2f5117ca1b99acbe4b52ed0bc4b5"
 dependencies = [
  "bytemuck",
  "font-kit",
@@ -3089,6 +3096,18 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn",
+]
+
+[[package]]
+name = "pulldown-cmark"
+version = "0.9.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "34f197a544b0c9ab3ae46c359a7ec9cbbb5c7bf97054266fecb7ead794a181d6"
+dependencies = [
+ "bitflags",
+ "getopts",
+ "memchr",
+ "unicase",
 ]
 
 [[package]]
@@ -3963,7 +3982,7 @@ dependencies = [
 [[package]]
 name = "swash"
 version = "0.1.4"
-source = "git+https://github.com/dfrg/swash#d3f8bbfa5f96688ab94278db6f85e00ba383e3f8"
+source = "git+https://github.com/lapce/swash#1d9b8c700a415f0f4216dd30026b3a2149db8e1e"
 dependencies = [
  "yazi",
  "zeno",
@@ -4038,15 +4057,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8018d24e04c95ac8790716a5987d0fec4f8b27249ffa0f7d33f1369bdfb88cbd"
 dependencies = [
  "once_cell",
-]
-
-[[package]]
-name = "threadpool"
-version = "1.8.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d050e60b33d41c19108b32cea32164033a9013fe3b46cbd4457559bfbf77afaa"
-dependencies = [
- "num_cpus",
 ]
 
 [[package]]
@@ -4309,6 +4319,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "tree-sitter-md"
+version = "0.0.1"
+source = "git+https://github.com/MDeiml/tree-sitter-markdown.git#6d112e7a9c1694504bb78ee0b92dcd509625e0df"
+dependencies = [
+ "cc",
+ "tree-sitter",
+]
+
+[[package]]
 name = "tree-sitter-php"
 version = "0.19.1"
 source = "git+https://github.com/tree-sitter/tree-sitter-php.git#ead3e4cc5f54602a6b54826c5d6881c9a9da15af"
@@ -4478,6 +4497,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "96bd2f2237fe450fcd0a1d2f5f4e91711124f7857ba2e964247776ebeeb7b0c4"
 dependencies = [
  "unic-common",
+]
+
+[[package]]
+name = "unicase"
+version = "2.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "50f37be617794602aabbeee0be4f259dc1778fabe05e2d67ee8f79326d5cb4f6"
+dependencies = [
+ "version_check",
 ]
 
 [[package]]
@@ -5127,9 +5155,9 @@ dependencies = [
 
 [[package]]
 name = "weezl"
-version = "0.1.5"
+version = "0.1.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d8b77fdfd5a253be4ab714e4ffa3c49caf146b4de743e97510c0656cf90f1e8e"
+checksum = "9c97e489d8f836838d497091de568cf16b117486d529ec5579233521065bd5e4"
 
 [[package]]
 name = "which"
