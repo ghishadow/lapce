@@ -223,7 +223,7 @@ mode = "i"
 key = "esc"
 command = "normal_mode"
 mode = "niv"
-when = "!search_focus"
+when = "!search_focus && !modal_focus"
 
 [[keymaps]]
 key = "ctrl+["
@@ -534,6 +534,16 @@ mode = "n"
 [[keymaps]]
 key = "ctrl+w v"
 command = "split_vertical"
+mode = "n"
+
+[[keymaps]]
+key = "ctrl+w c"
+command = "split_close"
+mode = "n"
+
+[[keymaps]]
+key = "ctrl+w x"
+command = "split_exchange"
 mode = "n"
 
 [[keymaps]]
