@@ -52,6 +52,7 @@ pub enum LapceLanguage {
     Ruby,
     Html,
     Java,
+    Hare,
 }
 
 impl LapceLanguage {
@@ -77,6 +78,7 @@ impl LapceLanguage {
             "rb" => LapceLanguage::Ruby,
             "html" | "htm" => LapceLanguage::Html,
             "java" => LapceLanguage::Java,
+            "ha" => LapceLanguage::Hare,
             _ => return None,
         })
     }
@@ -100,6 +102,7 @@ impl LapceLanguage {
             LapceLanguage::Ruby => "#",
             LapceLanguage::Html => "",
             LapceLanguage::Java => "//",
+            LapceLanguage::Hare => "//",
         }
     }
 
@@ -122,6 +125,7 @@ impl LapceLanguage {
             LapceLanguage::Ruby => "  ",
             LapceLanguage::Html => "    ",
             LapceLanguage::Java => "  ",
+            LapceLanguage::Hare => "        ",
         }
     }
 
@@ -146,6 +150,7 @@ impl LapceLanguage {
             LapceLanguage::Ruby => tree_sitter_ruby::language(),
             LapceLanguage::Html => tree_sitter_html::language(),
             LapceLanguage::Java => tree_sitter_java::language(),
+            LapceLanguage::Hare => tree_sitter_hare::language(),
         }
     }
 
@@ -176,6 +181,7 @@ impl LapceLanguage {
             LapceLanguage::Ruby => tree_sitter_ruby::HIGHLIGHT_QUERY,
             LapceLanguage::Html => tree_sitter_html::HIGHLIGHT_QUERY,
             LapceLanguage::Java => tree_sitter_java::HIGHLIGHT_QUERY,
+            LapceLanguage::Hare => tree_sitter_hare::HIGHLIGHTS_QUERY,
         };
 
         HighlightConfiguration::new(language, query, "", "").unwrap()

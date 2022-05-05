@@ -1811,6 +1811,7 @@ dependencies = [
  "tree-sitter-cpp",
  "tree-sitter-elixir",
  "tree-sitter-go",
+ "tree-sitter-hare",
  "tree-sitter-highlight",
  "tree-sitter-html",
  "tree-sitter-java",
@@ -4083,6 +4084,15 @@ name = "tree-sitter-go"
 version = "0.19.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "71967701c8214be4aa77e0260e98361e6fd71ceec1d9d03abb37a22c9f60d0ff"
+dependencies = [
+ "cc",
+ "tree-sitter",
+]
+
+[[package]]
+name = "tree-sitter-hare"
+version = "0.0.1"
+source = "git+https://github.com/ghishadow/tree-sitter-hare#8c420029cbc933443f3954599c4f4310312850a1"
 dependencies = [
  "cc",
  "tree-sitter",
