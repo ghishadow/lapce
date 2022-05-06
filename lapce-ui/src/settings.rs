@@ -16,14 +16,13 @@ use lapce_core::{
     mode::Mode,
 };
 use lapce_data::{
-    buffer::{Buffer, BufferContent},
     command::{
         CommandExecuted, CommandKind, LapceUICommand, LAPCE_COMMAND,
         LAPCE_UI_COMMAND,
     },
     config::{EditorConfig, LapceConfig, LapceTheme},
     data::{LapceEditorData, LapceTabData},
-    document::Document,
+    document::{BufferContent, Document},
     keypress::KeyPressFocus,
     proxy::VERSION,
 };
@@ -661,13 +660,6 @@ impl LapceSettingsItem {
         let input = input.map(|input| {
             let name = format!("{kind}.{name}");
             let content = BufferContent::Value(name.clone());
-            let mut buffer =
-                Buffer::new(content.clone(), data.id, event_sink.clone())
-                    .set_local();
-            buffer.load_content(&input);
-            data.main_split
-                .value_buffers
-                .insert(name.clone(), Arc::new(buffer));
 
             let mut doc = Document::new(
                 content.clone(),
