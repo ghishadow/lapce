@@ -679,17 +679,17 @@ impl LapceEditorBufferData {
     }
 
     pub fn update_hover(&mut self, ctx: &mut EventCtx, offset: usize) {
-        if !self.buffer.loaded() {
+        if !self.doc.loaded() {
             return;
         }
 
-        if self.buffer.local() {
+        if !self.doc.content().is_file() {
             return;
         }
 
-        let start_offset = self.buffer.prev_code_boundary(offset);
-        let end_offset = self.buffer.next_code_boundary(offset);
-        let input = self.buffer.slice_to_cow(start_offset..end_offset);
+        let start_offset = self.doc.buffer().prev_code_boundary(offset);
+        let end_offset = self.doc.buffer().next_code_boundary(offset);
+        let input = self.doc.buffer().slice_to_cow(start_offset..end_offset);
         if input.trim().is_empty() {
             return;
         }
@@ -698,7 +698,7 @@ impl LapceEditorBufferData {
 
         if hover.status != HoverStatus::Inactive
             && hover.offset == start_offset
-            && hover.buffer_id == self.buffer.id()
+            && hover.buffer_id == self.doc.id()
         {
             // We're hovering over the same location, but are trying to update
             return;
@@ -715,8 +715,7 @@ impl LapceEditorBufferData {
             self.proxy.clone(),
             hover.request_id,
             self.doc.id(),
-            self.buffer
-                .offset_to_position(start_offset, self.config.editor.tab_width),
+            self.doc.buffer().offset_to_position(start_offset),
             hover.id,
             event_sink,
         );
@@ -1874,18 +1873,36 @@ impl LapceEditorBufferData {
                 }
             }
             SearchForward => {
-                Arc::make_mut(&mut self.find).visual = true;
-                let offset = self.editor.new_cursor.offset();
-                let next =
-                    self.find
-                        .next(self.doc.buffer().text(), offset, false, true);
-                if let Some((start, _end)) = next {
-                    self.run_move_command(
-                        ctx,
-                        &lapce_core::movement::Movement::Offset(start),
-                        None,
-                        mods,
+                if self.editor.content.is_search() {
+                    if let Some(parent_view_id) = self.editor.parent_view_id {
+                        ctx.submit_command(Command::new(
+                            LAPCE_COMMAND,
+                            LapceCommand {
+                                kind: CommandKind::Focus(
+                                    FocusCommand::SearchForward,
+                                ),
+                                data: None,
+                            },
+                            Target::Widget(parent_view_id),
+                        ));
+                    }
+                } else {
+                    Arc::make_mut(&mut self.find).visual = true;
+                    let offset = self.editor.new_cursor.offset();
+                    let next = self.find.next(
+                        self.doc.buffer().text(),
+                        offset,
+                        false,
+                        true,
                     );
+                    if let Some((start, _end)) = next {
+                        self.run_move_command(
+                            ctx,
+                            &lapce_core::movement::Movement::Offset(start),
+                            None,
+                            mods,
+                        );
+                    }
                 }
             }
             SearchBackward => {
@@ -1916,6 +1933,15 @@ impl LapceEditorBufferData {
                         );
                     }
                 }
+            }
+            GlobalSearchRefresh => {
+                let tab_id = *self.main_split.tab_id;
+                let pattern = self.doc.buffer().text().to_string();
+                ctx.submit_command(Command::new(
+                    LAPCE_UI_COMMAND,
+                    LapceUICommand::UpdateSearch(pattern),
+                    Target::Widget(tab_id),
+                ));
             }
             ClearSearch => {
                 Arc::make_mut(&mut self.find).visual = false;
@@ -4027,7 +4053,13 @@ impl KeyPressFocus for LapceEditorBufferData {
         match condition {
             "search_focus" => {
                 self.editor.content == BufferContent::Local(LocalBufferKind::Search)
+                    && self.editor.parent_view_id.is_some()
             }
+            "global_search_focus" => {
+                self.editor.content == BufferContent::Local(LocalBufferKind::Search)
+                    && self.editor.parent_view_id.is_none()
+            }
+            "input_focus" => self.editor.content.is_input(),
             "editor_focus" => match self.editor.content {
                 BufferContent::File(_) => true,
                 BufferContent::Local(_) => false,
