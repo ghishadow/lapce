@@ -5,9 +5,7 @@ use druid::{
     UpdateCtx, Widget, WidgetExt, WidgetId, WidgetPod,
 };
 use lapce_data::{
-    command::{
-        CommandTarget, LapceCommandNew, LapceWorkbenchCommand, LAPCE_NEW_COMMAND,
-    },
+    command::{CommandKind, LapceCommand, LapceWorkbenchCommand, LAPCE_COMMAND},
     config::LapceTheme,
     data::{LapceTabData, PanelKind},
     panel::PanelPosition,
@@ -84,8 +82,8 @@ impl Widget<LapceTabData> for LapcePanel {
     }
 
     fn paint(&mut self, ctx: &mut PaintCtx, data: &LapceTabData, env: &Env) {
-        self.header.paint(ctx, data, env);
         self.split.paint(ctx, data, env);
+        self.header.paint(ctx, data, env);
     }
 }
 
@@ -313,7 +311,6 @@ impl Widget<LapceTabData> for PanelSectionHeader {
         let shadow_width = 5.0;
         let rect = ctx.size().to_rect();
         ctx.with_save(|ctx| {
-            ctx.clip(rect.inflate(0.0, 100.0));
             ctx.blurred_rect(
                 rect,
                 shadow_width,
@@ -344,6 +341,8 @@ impl Widget<LapceTabData> for PanelSectionHeader {
     }
 }
 
+/// This struct is used as the outer container for a panel,
+/// it contains the heading such as "Terminal" or "File Explorer".
 pub struct PanelMainHeader {
     text: String,
     icons: Vec<LapceIcon>,
@@ -377,12 +376,10 @@ impl PanelMainHeader {
                 .to_rect()
                 .with_origin(Point::new(x, gap)),
             command: Command::new(
-                LAPCE_NEW_COMMAND,
-                LapceCommandNew {
-                    cmd: LapceWorkbenchCommand::HidePanel.to_string(),
+                LAPCE_COMMAND,
+                LapceCommand {
+                    kind: CommandKind::Workbench(LapceWorkbenchCommand::HidePanel),
                     data: Some(json!(self.kind)),
-                    palette_desc: None,
-                    target: CommandTarget::Workbench,
                 },
                 Target::Widget(data.id),
             ),
@@ -412,13 +409,12 @@ impl PanelMainHeader {
                         .to_rect()
                         .with_origin(Point::new(x, gap)),
                     command: Command::new(
-                        LAPCE_NEW_COMMAND,
-                        LapceCommandNew {
-                            cmd: LapceWorkbenchCommand::ToggleMaximizedPanel
-                                .to_string(),
+                        LAPCE_COMMAND,
+                        LapceCommand {
+                            kind: CommandKind::Workbench(
+                                LapceWorkbenchCommand::ToggleMaximizedPanel,
+                            ),
                             data: Some(json!(self.kind)),
-                            palette_desc: None,
-                            target: CommandTarget::Workbench,
                         },
                         Target::Widget(data.id),
                     ),
@@ -509,13 +505,13 @@ impl Widget<LapceTabData> for PanelMainHeader {
         let shadow_width = 5.0;
         let rect = ctx.size().to_rect();
         ctx.with_save(|ctx| {
-            ctx.clip(rect.inflate(0.0, 100.0));
             ctx.blurred_rect(
                 rect,
                 shadow_width,
                 data.config
                     .get_color_unchecked(LapceTheme::LAPCE_DROPDOWN_SHADOW),
             );
+
             ctx.fill(
                 rect,
                 data.config

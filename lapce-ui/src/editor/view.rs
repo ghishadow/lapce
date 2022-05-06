@@ -1,15 +1,16 @@
-use std::{iter::Iterator, str::FromStr, sync::Arc};
+use std::{iter::Iterator, sync::Arc};
 
 use druid::{
     piet::PietText, BoxConstraints, Command, Data, Env, Event, EventCtx, LayoutCtx,
     LifeCycle, LifeCycleCtx, Modifiers, PaintCtx, Point, Rect, RenderContext, Size,
     Target, Vec2, Widget, WidgetExt, WidgetId, WidgetPod,
 };
+use lapce_core::command::{EditCommand, FocusCommand};
 use lapce_data::{
     buffer::{BufferContent, LocalBufferKind},
     command::{
-        CommandTarget, EnsureVisiblePosition, LapceCommand, LapceCommandNew,
-        LapceUICommand, LAPCE_NEW_COMMAND, LAPCE_UI_COMMAND,
+        CommandKind, EnsureVisiblePosition, LapceCommand, LapceUICommand,
+        LAPCE_COMMAND, LAPCE_UI_COMMAND,
     },
     config::LapceTheme,
     data::{EditorTabChild, FocusArea, LapceTabData, PanelData, PanelKind},
@@ -69,14 +70,14 @@ impl LapceEditorView {
         self
     }
 
-    pub fn set_placeholder(mut self, placehoder: String) -> Self {
+    pub fn set_placeholder(mut self, placeholder: String) -> Self {
         self.editor
             .widget_mut()
             .editor
             .widget_mut()
             .inner_mut()
             .child_mut()
-            .placeholder = Some(placehoder);
+            .placeholder = Some(placeholder);
         self
     }
 
@@ -117,6 +118,9 @@ impl LapceEditorView {
             BufferContent::Local(kind) => match kind {
                 LocalBufferKind::Keymap => {}
                 LocalBufferKind::Settings => {}
+                LocalBufferKind::Palette => {
+                    data.focus_area = FocusArea::Palette;
+                }
                 LocalBufferKind::FilePicker => {
                     data.focus_area = FocusArea::FilePicker;
                 }
@@ -162,20 +166,20 @@ impl LapceEditorView {
                 self.ensure_rect_visible(ctx, data, *rect, env);
             }
             LapceUICommand::ResolveCompletion(buffer_id, rev, offset, item) => {
-                if data.buffer.id != *buffer_id {
+                if data.doc.id() != *buffer_id {
                     return;
                 }
-                if data.buffer.rev != *rev {
+                if data.doc.rev() != *rev {
                     return;
                 }
-                if data.editor.cursor.offset() != *offset {
+                if data.editor.new_cursor.offset() != *offset {
                     return;
                 }
-                let offset = data.editor.cursor.offset();
-                let line = data.buffer.line_of_offset(offset);
+                let offset = data.editor.new_cursor.offset();
+                let line = data.doc.buffer().line_of_offset(offset);
                 let _ = data.apply_completion_item(item);
-                let new_offset = data.editor.cursor.offset();
-                let new_line = data.buffer.line_of_offset(new_offset);
+                let new_offset = data.editor.new_cursor.offset();
+                let new_line = data.doc.buffer().line_of_offset(new_offset);
                 if line != new_line {
                     self.editor
                         .widget_mut()
@@ -322,20 +326,26 @@ impl LapceEditorView {
     }
 
     fn cursor_region(data: &LapceEditorBufferData, text: &mut PietText) -> Rect {
-        let offset = data.editor.cursor.offset();
-        let (line, col) = data
-            .buffer
-            .offset_to_line_col(offset, data.config.editor.tab_width);
-        let width = data.config.editor_text_width(text, "W");
-        let cursor_x = col as f64 * width;
+        let offset = data.editor.new_cursor.offset();
+        let (line, col) = data.doc.buffer().offset_to_line_col(offset);
+        let width = data.config.editor_char_width(text);
+        let cursor_x = data
+            .doc
+            .point_of_line_col(
+                text,
+                line,
+                col,
+                data.config.editor.font_size,
+                &data.config,
+            )
+            .x;
         let line_height = data.config.editor.line_height as f64;
 
         let y = if data.editor.code_lens {
             let empty_vec = Vec::new();
             let normal_lines = data
                 .buffer
-                .syntax
-                .as_ref()
+                .syntax()
                 .map(|s| &s.normal_lines)
                 .unwrap_or(&empty_vec);
 
@@ -398,7 +408,7 @@ impl Widget<LapceTabData> for LapceEditorView {
         if let Some(find) = self.find.as_mut() {
             match event {
                 Event::Command(cmd) if cmd.is(LAPCE_UI_COMMAND) => {}
-                Event::Command(cmd) if cmd.is(LAPCE_NEW_COMMAND) => {}
+                Event::Command(cmd) if cmd.is(LAPCE_COMMAND) => {}
                 _ => {
                     find.event(ctx, event, data, env);
                 }
@@ -431,6 +441,7 @@ impl Widget<LapceTabData> for LapceEditorView {
 
         let mut editor_data = data.editor_view_content(self.view_id);
         let buffer = editor_data.buffer.clone();
+        let doc = editor_data.doc.clone();
 
         match event {
             Event::KeyDown(key_event) => {
@@ -458,24 +469,16 @@ impl Widget<LapceTabData> for LapceEditorView {
                 data.keypress = keypress.clone();
                 ctx.set_handled();
             }
-            Event::Command(cmd) if cmd.is(LAPCE_NEW_COMMAND) => {
-                let command = cmd.get_unchecked(LAPCE_NEW_COMMAND);
-                if let Ok(command) = LapceCommand::from_str(&command.cmd) {
-                    editor_data.run_command(
-                        ctx,
-                        &command,
-                        None,
-                        Modifiers::empty(),
-                        env,
-                    );
-                    self.ensure_cursor_visible(
-                        ctx,
-                        &editor_data,
-                        &data.panels,
-                        None,
-                        env,
-                    );
-                }
+            Event::Command(cmd) if cmd.is(LAPCE_COMMAND) => {
+                let command = cmd.get_unchecked(LAPCE_COMMAND);
+                editor_data.run_command(ctx, command, None, Modifiers::empty(), env);
+                self.ensure_cursor_visible(
+                    ctx,
+                    &editor_data,
+                    &data.panels,
+                    None,
+                    env,
+                );
             }
             Event::Command(cmd) if cmd.is(LAPCE_UI_COMMAND) => {
                 let cmd = cmd.get_unchecked(LAPCE_UI_COMMAND);
@@ -489,7 +492,7 @@ impl Widget<LapceTabData> for LapceEditorView {
             }
             _ => (),
         }
-        data.update_from_editor_buffer_data(editor_data, &editor, &buffer);
+        data.update_from_editor_buffer_data(editor_data, &editor, &buffer, &doc);
 
         self.header.event(ctx, event, data, env);
         self.editor.event(ctx, event, data, env);
@@ -526,6 +529,22 @@ impl Widget<LapceTabData> for LapceEditorView {
                     ));
                 }
             }
+            LifeCycle::FocusChanged(is_focus) => {
+                let editor = data.main_split.editors.get(&self.view_id).unwrap();
+                if !*is_focus
+                    && editor.content
+                        == BufferContent::Local(LocalBufferKind::Palette)
+                {
+                    ctx.submit_command(Command::new(
+                        LAPCE_COMMAND,
+                        LapceCommand {
+                            kind: CommandKind::Focus(FocusCommand::ModalClose),
+                            data: None,
+                        },
+                        Target::Widget(data.palette.widget_id),
+                    ));
+                }
+            }
             LifeCycle::HotChanged(is_hot) => {
                 self.header.widget_mut().view_is_hot = *is_hot;
                 let editor = data.main_split.editors.get(&self.view_id).unwrap();
@@ -556,23 +575,19 @@ impl Widget<LapceTabData> for LapceEditorView {
         if old_data.config.lapce.modal != data.config.lapce.modal {
             if !data.config.lapce.modal {
                 ctx.submit_command(Command::new(
-                    LAPCE_NEW_COMMAND,
-                    LapceCommandNew {
-                        cmd: LapceCommand::InsertMode.to_string(),
+                    LAPCE_COMMAND,
+                    LapceCommand {
+                        kind: CommandKind::Edit(EditCommand::InsertMode),
                         data: None,
-                        palette_desc: None,
-                        target: CommandTarget::Focus,
                     },
                     Target::Widget(self.view_id),
                 ));
             } else {
                 ctx.submit_command(Command::new(
-                    LAPCE_NEW_COMMAND,
-                    LapceCommandNew {
-                        cmd: LapceCommand::NormalMode.to_string(),
+                    LAPCE_COMMAND,
+                    LapceCommand {
+                        kind: CommandKind::Edit(EditCommand::NormalMode),
                         data: None,
-                        palette_desc: None,
-                        target: CommandTarget::Focus,
                     },
                     Target::Widget(self.view_id),
                 ));
@@ -581,17 +596,17 @@ impl Widget<LapceTabData> for LapceEditorView {
         let old_editor_data = old_data.editor_view_content(self.view_id);
         let editor_data = data.editor_view_content(self.view_id);
 
-        if let Some(syntax) = editor_data.buffer.syntax.as_ref() {
+        if let Some(syntax) = editor_data.buffer.syntax() {
             if syntax.line_height != data.config.editor.line_height
                 || syntax.lens_height != data.config.editor.code_lens_font_size
             {
-                if let BufferContent::File(path) = &editor_data.buffer.content {
+                if let BufferContent::File(path) = editor_data.buffer.content() {
                     let tab_id = data.id;
                     let event_sink = ctx.get_external_handle();
                     let mut syntax = syntax.clone();
                     let line_height = data.config.editor.line_height;
                     let lens_height = data.config.editor.code_lens_font_size;
-                    let rev = editor_data.buffer.rev;
+                    let rev = editor_data.buffer.rev();
                     let path = path.clone();
                     rayon::spawn(move || {
                         syntax.update_lens_height(line_height, lens_height);
@@ -617,8 +632,8 @@ impl Widget<LapceTabData> for LapceEditorView {
         if editor_data.editor.compare.is_some() {
             if !editor_data
                 .buffer
-                .histories
-                .ptr_eq(&old_editor_data.buffer.histories)
+                .histories()
+                .ptr_eq(old_editor_data.buffer.histories())
             {
                 ctx.request_layout();
             }
@@ -630,17 +645,17 @@ impl Widget<LapceTabData> for LapceEditorView {
                 ctx.request_layout();
             }
         }
-        if editor_data.buffer.dirty != old_editor_data.buffer.dirty {
+        if editor_data.buffer.dirty() != old_editor_data.buffer.dirty() {
             ctx.request_paint();
         }
-        if editor_data.editor.cursor != old_editor_data.editor.cursor {
+        if editor_data.editor.new_cursor != old_editor_data.editor.new_cursor {
             ctx.request_paint();
         }
 
         let buffer = &editor_data.buffer;
         let old_buffer = &old_editor_data.buffer;
-        if buffer.max_len != old_buffer.max_len
-            || buffer.num_lines != old_buffer.num_lines
+        if buffer.max_len() != old_buffer.max_len()
+            || buffer.num_lines() != old_buffer.num_lines()
         {
             ctx.request_layout();
         }
@@ -657,7 +672,7 @@ impl Widget<LapceTabData> for LapceEditorView {
             }
         }
 
-        if buffer.rev != old_buffer.rev {
+        if buffer.rev() != old_buffer.rev() {
             ctx.request_paint();
         }
 
@@ -666,6 +681,7 @@ impl Widget<LapceTabData> for LapceEditorView {
         {
             ctx.request_paint();
         }
+        self.editor.update(ctx, data, env);
     }
 
     fn layout(

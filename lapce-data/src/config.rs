@@ -1,4 +1,4 @@
-use std::{io::Write, path::PathBuf};
+use std::{cell::RefCell, io::Write, path::PathBuf, rc::Rc};
 
 use anyhow::Result;
 use directories::ProjectDirs;
@@ -13,7 +13,6 @@ use thiserror::Error;
 
 use crate::{
     command::{LapceUICommand, LAPCE_UI_COMMAND},
-    data::hex_to_color,
     state::{LapceWorkspace, LapceWorkspaceType},
 };
 
@@ -40,6 +39,7 @@ impl LapceTheme {
     pub const EDITOR_CARET: &'static str = "editor.caret";
     pub const EDITOR_SELECTION: &'static str = "editor.selection";
     pub const EDITOR_CURRENT_LINE: &'static str = "editor.current_line";
+    pub const EDITOR_LINK: &'static str = "editor.link";
 
     pub const SOURCE_CONTROL_ADDED: &'static str = "source_control.added";
     pub const SOURCE_CONTROL_REMOVED: &'static str = "source_control.removed";
@@ -79,6 +79,10 @@ impl LapceTheme {
     pub const PANEL_HOVERED: &'static str = "panel.hovered";
 
     pub const STATUS_BACKGROUND: &'static str = "status.background";
+    pub const STATUS_MODAL_NORMAL: &'static str = "status.modal.normal";
+    pub const STATUS_MODAL_INSERT: &'static str = "status.modal.insert";
+    pub const STATUS_MODAL_VISUAL: &'static str = "status.modal.visual";
+    pub const STATUS_MODAL_TERMINAL: &'static str = "status.modal.terminal";
 
     pub const INPUT_LINE_HEIGHT: druid::Key<f64> =
         druid::Key::new("lapce.input_line_height");
@@ -86,6 +90,8 @@ impl LapceTheme {
         druid::Key::new("lapce.input_line_padding");
     pub const INPUT_FONT_SIZE: druid::Key<u64> =
         druid::Key::new("lapce.input_font_size");
+
+    pub const MARKDOWN_BLOCKQUOTE: &'static str = "markdown.blockquote";
 }
 
 #[derive(Error, Debug)]
@@ -163,11 +169,11 @@ impl Theme {
         for (k, v) in theme_colors.iter() {
             if let Some(stripped) = v.strip_prefix('$') {
                 if let Some(hex) = theme_colors.get(stripped) {
-                    if let Ok(color) = hex_to_color(hex) {
+                    if let Ok(color) = Color::from_hex_str(hex) {
                         theme.insert(k.clone(), color);
                     }
                 }
-            } else if let Ok(color) = hex_to_color(v) {
+            } else if let Ok(color) = Color::from_hex_str(v) {
                 theme.insert(k.clone(), color);
             }
         }
@@ -329,6 +335,8 @@ pub struct Config {
     pub editor: EditorConfig,
     #[serde(skip)]
     pub themes: Themes,
+    #[serde(skip)]
+    tab_layout_info: Rc<RefCell<HashMap<(FontFamily, usize), f64>>>,
 }
 
 pub struct ConfigWatcher {
@@ -538,30 +546,89 @@ impl Config {
         self.themes.style_color(name)
     }
 
+    /// Calculate the width of the character "W" (being the widest character)
+    /// in the editor's current font family at the specified font size.
     pub fn char_width(&self, text: &mut PietText, font_size: f64) -> f64 {
-        let text_layout = text
-            .new_text_layout("W")
-            .font(self.editor.font_family(), font_size)
-            .build()
-            .unwrap();
-        text_layout.size().width
+        Self::editor_text_size_internal(
+            self.editor.font_family(),
+            font_size,
+            text,
+            "W",
+        )
+        .width
     }
 
-    pub fn editor_text_width(&self, text: &mut PietText, c: &str) -> f64 {
-        let text_layout = text
-            .new_text_layout(c.to_string())
-            .font(self.editor.font_family(), self.editor.font_size as f64)
-            .build()
-            .unwrap();
-        text_layout.size().width
+    /// Calculate the width of the character "W" (being the widest character)
+    /// in the editor's current font family and current font size.
+    pub fn editor_char_width(&self, text: &mut PietText) -> f64 {
+        self.char_width(text, self.editor.font_size as f64)
     }
 
-    pub fn editor_text_size(&self, text: &mut PietText, c: &str) -> Size {
+    /// Calculate the width of `text_to_measure` in the editor's current font family and font size.
+    pub fn editor_text_width(
+        &self,
+        text: &mut PietText,
+        text_to_measure: &str,
+    ) -> f64 {
+        Self::editor_text_size_internal(
+            self.editor.font_family(),
+            self.editor.font_size as f64,
+            text,
+            text_to_measure,
+        )
+        .width
+    }
+
+    /// Calculate the size of `text_to_measure` in the editor's current font family and font size.
+    pub fn editor_text_size(
+        &self,
+        text: &mut PietText,
+        text_to_measure: &str,
+    ) -> Size {
+        Self::editor_text_size_internal(
+            self.editor.font_family(),
+            self.editor.font_size as f64,
+            text,
+            text_to_measure,
+        )
+    }
+
+    /// Efficiently calculate the size of a piece of text, without allocating.
+    /// This function should not be made public, use one of the public wrapper functions instead.
+    fn editor_text_size_internal(
+        font_family: FontFamily,
+        font_size: f64,
+        text: &mut PietText,
+        text_to_measure: &str,
+    ) -> Size {
+        // Lie about the lifetime of `text_to_measure`.
+        //
+        // The method `new_text_layout` will take ownership of its parameter
+        // and hold it inside the `text_layout` object. It will normally only do this efficiently
+        // for `&'static str`, and not other `&'a str`. It can safely do this for static strings
+        // because they are known to live for the lifetime of the program.
+        //
+        // `new_text_layout` can also work by taking ownership of an owned type such
+        // as String, Rc, or Arc. But they all require allocation. We want to measure
+        // `strs` with arbitrary lifetimes. If we 'cheat' by extending the lifetime of the
+        // `text_to_measure` (in this function only) then we can safely call `new_text_layout`
+        // because the `text_layout` value that is produced is local to this function and hence
+        // always dropped inside this function, and hence its lifetime is always stricly less
+        // than the lifetime of `text_to_measure`, irrespective of whether `text_to_measure`
+        // is actually static or not.
+        //
+        // Note that this technique also assumes that `new_text_layout` does not stash
+        // its parameter away somewhere, such as a global cache. If it did, this would
+        // break and we would have to go back to calling `to_string` on the parameter.
+        let static_str: &'static str =
+            unsafe { std::mem::transmute(text_to_measure) };
+
         let text_layout = text
-            .new_text_layout(c.to_string())
-            .font(self.editor.font_family(), self.editor.font_size as f64)
+            .new_text_layout(static_str)
+            .font(font_family, font_size)
             .build()
             .unwrap();
+
         text_layout.size()
     }
 
@@ -653,5 +720,26 @@ impl Config {
                 .open(&path);
         }
         Some(path)
+    }
+
+    pub fn tab_width(
+        &self,
+        text: &mut PietText,
+        font_family: FontFamily,
+        font_size: usize,
+    ) -> f64 {
+        let mut info = self.tab_layout_info.borrow_mut();
+        let width =
+            info.entry((font_family.clone(), font_size))
+                .or_insert_with(|| {
+                    text.new_text_layout(" a")
+                        .font(font_family.clone(), font_size as f64)
+                        .build()
+                        .unwrap()
+                        .hit_test_text_position(1)
+                        .point
+                        .x
+                });
+        self.editor.tab_width as f64 * *width
     }
 }

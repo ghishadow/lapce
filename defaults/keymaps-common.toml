@@ -29,10 +29,12 @@ mode = "i"
 [[keymaps]]
 key = "Home"
 command = "line_start_non_blank"
+mode = "inv"
 
 [[keymaps]]
 key = "End"
 command = "line_end"
+mode = "inv"
 
 [[keymaps]]
 key = "PageUp"
@@ -167,20 +169,24 @@ mode = "i"
 [[keymaps]]
 key = "right"
 command = "right"
+mode = "inv"
 
 [[keymaps]]
 key = "left"
 command = "left"
+mode = "inv"
 
 [[keymaps]]
 key = "up"
 command = "up"
 when = "!list_focus"
+mode = "inv"
 
 [[keymaps]]
 key = "down"
 command = "down"
 when = "!list_focus"
+mode = "inv"
 
 [[keymaps]]
 key = "ctrl+h"
@@ -190,13 +196,25 @@ mode = "i"
 [[keymaps]]
 key = "enter"
 command = "insert_new_line"
-when = "!list_focus"
+when = "!list_focus && !input_focus"
 mode = "i"
 
 [[keymaps]]
 key = "shift+enter"
 command = "search_backward"
 when = "search_focus"
+mode = "i"
+
+[[keymaps]]
+key = "enter"
+command = "search_forward"
+when = "search_focus"
+mode = "i"
+
+[[keymaps]]
+key = "enter"
+command = "global_search_refresh"
+when = "global_search_focus"
 mode = "i"
 
 [[keymaps]]
@@ -217,6 +235,12 @@ mode = "i"
 key = "esc"
 command = "normal_mode"
 mode = "niv"
+when = "!search_focus && !modal_focus"
+
+[[keymaps]]
+key = "ctrl+["
+command = "normal_mode"
+mode = "niv"
 when = "!search_focus"
 
 [[keymaps]]
@@ -226,12 +250,12 @@ mode = "n"
 
 [[keymaps]]
 key = "G"
-command = "go_to_line_deault_last"
+command = "go_to_line_default_last"
 mode = "nv"
 
 [[keymaps]]
 key = "g g"
-command = "go_to_line_deault_first"
+command = "go_to_line_default_first"
 mode = "nv"
 
 [[keymaps]]
@@ -522,6 +546,16 @@ mode = "n"
 [[keymaps]]
 key = "ctrl+w v"
 command = "split_vertical"
+mode = "n"
+
+[[keymaps]]
+key = "ctrl+w c"
+command = "split_close"
+mode = "n"
+
+[[keymaps]]
+key = "ctrl+w x"
+command = "split_exchange"
 mode = "n"
 
 [[keymaps]]

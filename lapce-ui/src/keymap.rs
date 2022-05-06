@@ -7,6 +7,7 @@ use druid::{
     LayoutCtx, LifeCycle, LifeCycleCtx, PaintCtx, Point, Rect, RenderContext, Size,
     Target, UpdateCtx, Widget, WidgetExt, WidgetId,
 };
+use lapce_core::mode::Modes;
 use lapce_data::{
     command::{LapceUICommand, LAPCE_UI_COMMAND},
     config::LapceTheme,
@@ -14,7 +15,6 @@ use lapce_data::{
     keypress::{
         paint_key, Alignment, DefaultKeyPressHandler, KeyMap, KeyPress, KeyPressData,
     },
-    state::Modes,
 };
 
 use crate::{
@@ -92,7 +92,7 @@ impl LapceKeymap {
             if let Some(command) = commands_without_keymap.get(j) {
                 self.active_keymap = Some((
                     KeyMap {
-                        command: command.cmd.clone(),
+                        command: command.kind.str().to_string(),
                         key: Vec::new(),
                         modes: Modes::empty(),
                         when: None,
@@ -266,9 +266,7 @@ impl Widget<LapceTabData> for LapceKeymap {
                     let text_layout = ctx
                         .text()
                         .new_text_layout(
-                            cmd.palette_desc
-                                .clone()
-                                .unwrap_or_else(|| cmd.cmd.clone()),
+                            cmd.kind.desc().unwrap_or_else(|| cmd.kind.str()),
                         )
                         .font(FontFamily::SYSTEM_UI, 13.0)
                         .text_color(
@@ -357,9 +355,9 @@ impl Widget<LapceTabData> for LapceKeymap {
                         .text()
                         .new_text_layout(
                             command
-                                .palette_desc
-                                .clone()
-                                .unwrap_or_else(|| command.cmd.clone()),
+                                .kind
+                                .desc()
+                                .unwrap_or_else(|| command.kind.str()),
                         )
                         .font(FontFamily::SYSTEM_UI, 13.0)
                         .text_color(
@@ -454,7 +452,7 @@ impl Widget<LapceTabData> for LapceKeymap {
                 let text = ctx
                     .text()
                     .new_text_layout(
-                        cmd.palette_desc.clone().unwrap_or_else(|| cmd.cmd.clone()),
+                        cmd.kind.desc().unwrap_or_else(|| cmd.kind.str()),
                     )
                     .font(FontFamily::SYSTEM_UI, 13.0)
                     .text_color(
@@ -488,7 +486,7 @@ impl Widget<LapceTabData> for LapceKeymap {
                 );
             let text = ctx
                 .text()
-                .new_text_layout("Save".to_string())
+                .new_text_layout("Save")
                 .font(FontFamily::SYSTEM_UI, 13.0)
                 .text_color(
                     data.config
@@ -524,7 +522,7 @@ impl Widget<LapceTabData> for LapceKeymap {
                 );
             let text = ctx
                 .text()
-                .new_text_layout("Cancel".to_string())
+                .new_text_layout("Cancel")
                 .font(FontFamily::SYSTEM_UI, 13.0)
                 .text_color(
                     data.config
@@ -612,7 +610,7 @@ impl Widget<LapceTabData> for LapceKeymapHeader {
 
         let text_layout = ctx
             .text()
-            .new_text_layout("Command".to_string())
+            .new_text_layout("Command")
             .font(FontFamily::SYSTEM_UI, 14.0)
             .default_attribute(TextAttribute::Weight(FontWeight::BOLD))
             .text_color(
@@ -630,7 +628,7 @@ impl Widget<LapceTabData> for LapceKeymapHeader {
 
         let text_layout = ctx
             .text()
-            .new_text_layout("Keybinding".to_string())
+            .new_text_layout("Keybinding")
             .font(FontFamily::SYSTEM_UI, 14.0)
             .default_attribute(TextAttribute::Weight(FontWeight::BOLD))
             .text_color(
@@ -651,7 +649,7 @@ impl Widget<LapceTabData> for LapceKeymapHeader {
 
         let text_layout = ctx
             .text()
-            .new_text_layout("When".to_string())
+            .new_text_layout("When")
             .font(FontFamily::SYSTEM_UI, 14.0)
             .default_attribute(TextAttribute::Weight(FontWeight::BOLD))
             .text_color(
@@ -679,7 +677,7 @@ impl Widget<LapceTabData> for LapceKeymapHeader {
         if data.config.lapce.modal {
             let text_layout = ctx
                 .text()
-                .new_text_layout("Modes".to_string())
+                .new_text_layout("Modes")
                 .font(FontFamily::SYSTEM_UI, 14.0)
                 .default_attribute(TextAttribute::Weight(FontWeight::BOLD))
                 .text_color(

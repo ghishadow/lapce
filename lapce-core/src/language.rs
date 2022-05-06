@@ -48,12 +48,16 @@ pub enum LapceLanguage {
     C,
     Cpp,
     Json,
+    Markdown,
+    Ruby,
+    Html,
+    Java,
 }
 
 impl LapceLanguage {
     pub fn from_path(path: &Path) -> Option<LapceLanguage> {
-        let extension = path.extension()?.to_str()?;
-        Some(match extension {
+        let extension = path.extension()?.to_str()?.to_lowercase();
+        Some(match extension.as_str() {
             "rs" => LapceLanguage::Rust,
             "js" => LapceLanguage::Javascript,
             "jsx" => LapceLanguage::Jsx,
@@ -65,8 +69,14 @@ impl LapceLanguage {
             "php" => LapceLanguage::Php,
             "ex" | "exs" => LapceLanguage::Elixir,
             "c" | "h" => LapceLanguage::C,
-            "cpp" | "cxx" | "cc" | "hpp" | "hxx" => LapceLanguage::Cpp,
+            "cpp" | "cxx" | "cc" | "c++" | "hpp" | "hxx" | "hh" | "h++" => {
+                LapceLanguage::Cpp
+            }
             "json" => LapceLanguage::Json,
+            "md" => LapceLanguage::Markdown,
+            "rb" => LapceLanguage::Ruby,
+            "html" | "htm" => LapceLanguage::Html,
+            "java" => LapceLanguage::Java,
             _ => return None,
         })
     }
@@ -86,6 +96,10 @@ impl LapceLanguage {
             LapceLanguage::C => "//",
             LapceLanguage::Cpp => "//",
             LapceLanguage::Json => "",
+            LapceLanguage::Markdown => "",
+            LapceLanguage::Ruby => "#",
+            LapceLanguage::Html => "",
+            LapceLanguage::Java => "//",
         }
     }
 
@@ -104,6 +118,10 @@ impl LapceLanguage {
             LapceLanguage::C => "  ",
             LapceLanguage::Cpp => "    ",
             LapceLanguage::Json => "    ",
+            LapceLanguage::Markdown => "    ",
+            LapceLanguage::Ruby => "  ",
+            LapceLanguage::Html => "    ",
+            LapceLanguage::Java => "  ",
         }
     }
 
@@ -124,6 +142,10 @@ impl LapceLanguage {
             LapceLanguage::C => tree_sitter_c::language(),
             LapceLanguage::Cpp => tree_sitter_cpp::language(),
             LapceLanguage::Json => tree_sitter_json::language(),
+            LapceLanguage::Markdown => tree_sitter_md::language(),
+            LapceLanguage::Ruby => tree_sitter_ruby::language(),
+            LapceLanguage::Html => tree_sitter_html::language(),
+            LapceLanguage::Java => tree_sitter_java::language(),
         }
     }
 
@@ -150,6 +172,10 @@ impl LapceLanguage {
             LapceLanguage::C => tree_sitter_c::HIGHLIGHT_QUERY,
             LapceLanguage::Cpp => tree_sitter_cpp::HIGHLIGHT_QUERY,
             LapceLanguage::Json => tree_sitter_json::HIGHLIGHT_QUERY,
+            LapceLanguage::Markdown => tree_sitter_md::HIGHLIGHTS_QUERY,
+            LapceLanguage::Ruby => tree_sitter_ruby::HIGHLIGHT_QUERY,
+            LapceLanguage::Html => tree_sitter_html::HIGHLIGHT_QUERY,
+            LapceLanguage::Java => tree_sitter_java::HIGHLIGHT_QUERY,
         };
 
         HighlightConfiguration::new(language, query, "", "").unwrap()

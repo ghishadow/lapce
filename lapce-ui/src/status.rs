@@ -1,16 +1,14 @@
 use druid::{
     piet::{Text, TextLayout, TextLayoutBuilder},
-    Color, Command, Event, EventCtx, FontFamily, MouseEvent, Point, RenderContext,
-    Size, Target, Widget,
+    Command, Event, EventCtx, FontFamily, MouseEvent, Point, RenderContext, Size,
+    Target, Widget,
 };
+use lapce_core::mode::Mode;
 use lapce_data::{
-    command::{
-        CommandTarget, LapceCommandNew, LapceWorkbenchCommand, LAPCE_NEW_COMMAND,
-    },
+    command::{CommandKind, LapceCommand, LapceWorkbenchCommand, LAPCE_COMMAND},
     config::LapceTheme,
     data::{FocusArea, LapceTabData, PanelKind},
     panel::PanelPosition,
-    state::Mode,
 };
 
 use crate::{svg::get_svg, tab::LapceIcon};
@@ -69,7 +67,7 @@ impl LapceStatusNew {
                 };
 
                 LapceIcon {
-                    icon: p.svg_name(),
+                    icon: p.svg_name().to_string(),
                     rect: Size::new(self_size.height, self_size.height)
                         .to_rect()
                         .with_origin(Point::new(
@@ -77,12 +75,10 @@ impl LapceStatusNew {
                             0.0,
                         )),
                     command: Command::new(
-                        LAPCE_NEW_COMMAND,
-                        LapceCommandNew {
-                            cmd: cmd.to_string(),
+                        LAPCE_COMMAND,
+                        LapceCommand {
+                            kind: CommandKind::Workbench(cmd),
                             data: None,
-                            palette_desc: None,
-                            target: CommandTarget::Workbench,
                         },
                         Target::Widget(data.id),
                     ),
@@ -219,24 +215,27 @@ impl Widget<LapceTabData> for LapceStatusNew {
 
         if data.config.lapce.modal {
             let (mode, color) = {
-                let mode =
-                    if data.focus_area == FocusArea::Panel(PanelKind::Terminal) {
-                        data.terminal
-                            .terminals
-                            .get(&data.terminal.active_term_id)
-                            .unwrap()
-                            .mode
-                    } else {
-                        data.main_split
-                            .active_editor()
-                            .map(|e| e.cursor.get_mode())
-                            .unwrap_or(Mode::Normal)
-                    };
+                let mode = if data.focus_area
+                    == FocusArea::Panel(PanelKind::Terminal)
+                {
+                    match data.terminal.terminals.get(&data.terminal.active_term_id)
+                    {
+                        Some(terminal) => terminal.mode,
+                        None => Mode::Normal,
+                    }
+                } else {
+                    data.main_split
+                        .active_editor()
+                        .map(|e| e.cursor.get_mode())
+                        .unwrap_or(Mode::Normal)
+                };
                 match mode {
-                    Mode::Normal => ("Normal", Color::rgb8(64, 120, 242)),
-                    Mode::Insert => ("Insert", Color::rgb8(228, 86, 73)),
-                    Mode::Visual => ("Visual", Color::rgb8(193, 132, 1)),
-                    Mode::Terminal => ("Terminal", Color::rgb8(228, 86, 73)),
+                    Mode::Normal => ("Normal", LapceTheme::STATUS_MODAL_NORMAL),
+                    Mode::Insert => ("Insert", LapceTheme::STATUS_MODAL_INSERT),
+                    Mode::Visual => ("Visual", LapceTheme::STATUS_MODAL_VISUAL),
+                    Mode::Terminal => {
+                        ("Terminal", LapceTheme::STATUS_MODAL_TERMINAL)
+                    }
                 }
             };
 
@@ -253,8 +252,11 @@ impl Widget<LapceTabData> for LapceStatusNew {
                 .unwrap();
             let text_size = text_layout.size();
             let fill_size = Size::new(text_size.width + 10.0, size.height);
-            ctx.fill(fill_size.to_rect(), &color);
-            ctx.draw_text(&text_layout, Point::new(5.0, 4.0));
+            ctx.fill(fill_size.to_rect(), data.config.get_color_unchecked(color));
+            ctx.draw_text(
+                &text_layout,
+                Point::new(5.0, (size.height - text_layout.size().height) / 2.0),
+            );
             left += text_size.width + 10.0;
         }
 
@@ -272,7 +274,10 @@ impl Widget<LapceTabData> for LapceStatusNew {
             )
             .build()
             .unwrap();
-        ctx.draw_text(&text_layout, Point::new(left + 10.0, 4.0));
+        ctx.draw_text(
+            &text_layout,
+            Point::new(left + 10.0, (size.height - text_layout.size().height) / 2.0),
+        );
         left += 10.0 + text_layout.size().width;
 
         for progress in data.progresses.iter() {
@@ -293,7 +298,13 @@ impl Widget<LapceTabData> for LapceStatusNew {
                 )
                 .build()
                 .unwrap();
-            ctx.draw_text(&text_layout, Point::new(left + 10.0, 4.0));
+            ctx.draw_text(
+                &text_layout,
+                Point::new(
+                    left + 10.0,
+                    (size.height - text_layout.size().height) / 2.0,
+                ),
+            );
             left += 10.0 + text_layout.size().width;
         }
 
