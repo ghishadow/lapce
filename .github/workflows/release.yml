@@ -29,7 +29,7 @@ jobs:
       - name: Update rust toolchain
         run: rustup update --no-self-update ${{ matrix.version }} && rustup default ${{ matrix.version }}
       - name: Build
-        run: cargo build --profile release-lto
+        run: cargo build --release
       - name: Install WiX
         run: nuget install WiX
       - name: Crate msi installer
