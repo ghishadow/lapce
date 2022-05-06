@@ -5,6 +5,7 @@ use druid::{
     Data, ExtEventSink, Target, WidgetId, WindowId,
 };
 use lapce_core::indent::{auto_detect_indent_style, IndentStyle};
+use lapce_core::mode::Mode;
 use lapce_core::style::line_styles;
 use lapce_core::syntax::Syntax;
 use lapce_rpc::buffer::{BufferHeadResponse, BufferId, NewBufferResponse};
@@ -28,9 +29,7 @@ use xi_rope::{
 };
 use xi_unicode::EmojiExt;
 
-use crate::buffer::data::{
-    BufferData, BufferDataListener, EditableBufferData, DEFAULT_INDENT,
-};
+use crate::buffer::data::{BufferData, BufferDataListener, EditableBufferData};
 use crate::buffer::decoration::BufferDecoration;
 use crate::config::{Config, LapceTheme};
 use crate::editor::EditorLocationNew;
@@ -41,7 +40,6 @@ use crate::{
     find::Find,
     movement::{ColPosition, LinePosition, Movement, SelRegion, Selection},
     proxy::LapceProxy,
-    state::Mode,
 };
 
 pub mod data;
@@ -156,9 +154,10 @@ struct Revision {
 
 #[derive(Clone, PartialEq, Eq, Hash, Serialize, Deserialize, Debug)]
 pub enum LocalBufferKind {
+    Empty,
+    Palette,
     Search,
     SourceControl,
-    Empty,
     FilePicker,
     Keymap,
     Settings,
@@ -172,11 +171,16 @@ pub enum BufferContent {
 }
 
 impl BufferContent {
+    pub fn is_file(&self) -> bool {
+        matches!(self, BufferContent::File(_))
+    }
+
     pub fn is_special(&self) -> bool {
         match &self {
             BufferContent::File(_) => false,
             BufferContent::Local(local) => match local {
                 LocalBufferKind::Search
+                | LocalBufferKind::Palette
                 | LocalBufferKind::SourceControl
                 | LocalBufferKind::FilePicker
                 | LocalBufferKind::Settings
@@ -192,6 +196,7 @@ impl BufferContent {
             BufferContent::File(_) => false,
             BufferContent::Local(local) => match local {
                 LocalBufferKind::Search
+                | LocalBufferKind::Palette
                 | LocalBufferKind::FilePicker
                 | LocalBufferKind::Settings
                 | LocalBufferKind::Keymap => true,
@@ -224,7 +229,7 @@ pub struct Buffer {
 
     pub code_actions: im::HashMap<usize, CodeActionResponse>,
 
-    decoration: BufferDecoration,
+    pub decoration: BufferDecoration,
 }
 
 pub struct BufferEditListener<'a> {
@@ -431,7 +436,7 @@ impl Buffer {
             .unwrap_or_else(|| {
                 self.syntax()
                     .map(|s| IndentStyle::from_str(s.language.indent_unit()))
-                    .unwrap_or(DEFAULT_INDENT)
+                    .unwrap_or(IndentStyle::DEFAULT_INDENT)
             });
     }
 
@@ -568,7 +573,7 @@ impl Buffer {
                                     LapceUICommand::LoadBufferHead {
                                         path,
                                         content: Rope::from(resp.content),
-                                        id: resp.id,
+                                        version: resp.version,
                                     },
                                     Target::Widget(tab_id),
                                 );
@@ -660,8 +665,9 @@ impl Buffer {
                 // start incremental find on visible region
                 let start = self.offset_of_line(start_line);
                 let end = self.offset_of_line(end_line + 1);
-                *find_progress =
-                    FindProgress::InProgress(Selection::region(start, end));
+                *find_progress = FindProgress::InProgress(
+                    lapce_core::selection::Selection::region(start, end),
+                );
                 Some((start, end))
             }
             FindProgress::InProgress(searched_range) => {
@@ -686,7 +692,9 @@ impl Buffer {
                     }
                     if range.is_some() {
                         let mut new_range = searched_range.clone();
-                        new_range.add_region(SelRegion::new(start, end, None));
+                        new_range.add_region(lapce_core::selection::SelRegion::new(
+                            start, end, None,
+                        ));
                         *find_progress = FindProgress::InProgress(new_range);
                     }
                     range
@@ -825,7 +833,7 @@ impl Buffer {
                 .or_else(|| self.syntax().and_then(|s| s.styles.as_ref()));
 
             let line_styles = styles
-                .map(|styles| line_styles(&self.data.rope, line, &styles))
+                .map(|styles| line_styles(&self.data.rope, line, styles))
                 .unwrap_or_default();
             self.line_styles()
                 .borrow_mut()
@@ -840,9 +848,8 @@ impl Buffer {
         history: &str,
         line: usize,
 
-        #[allow(unused_variables)] cursor_index: Option<usize>,
-
-        bounds: [f64; 2],
+        _cursor_index: Option<usize>,
+        _bounds: [f64; 2],
         config: &Config,
     ) -> Option<PietTextLayout> {
         let rope = self.decoration.histories.get(history)?;
@@ -872,11 +879,7 @@ impl Buffer {
                 }
             }
         }
-        Some(layout_builder.build_with_info(
-            true,
-            config.editor.tab_width,
-            Some(bounds),
-        ))
+        Some(layout_builder.build().unwrap())
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -887,7 +890,7 @@ impl Buffer {
         line_content: &str,
         cursor_index: Option<usize>,
         font_size: usize,
-        bounds: [f64; 2],
+        _bounds: [f64; 2],
         config: &Config,
     ) -> PietTextLayout {
         let styles = self.line_style(line);
@@ -922,7 +925,7 @@ impl Buffer {
                 }
             }
         }
-        layout_builder.build_with_info(true, config.editor.tab_width, Some(bounds))
+        layout_builder.build().unwrap()
     }
 
     pub fn indent_on_line(&self, line: usize) -> String {
@@ -2210,7 +2213,7 @@ fn buffer_diff(
     Some(changes)
 }
 
-fn rope_diff(
+pub fn rope_diff(
     left_rope: Rope,
     right_rope: Rope,
     rev: u64,

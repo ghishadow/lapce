@@ -1,12 +1,11 @@
+use lapce_core::{
+    mode::{Mode, VisualMode},
+    register::RegisterData,
+};
 use serde::{Deserialize, Serialize};
 use xi_rope::{RopeDelta, Transformer};
 
-use crate::{
-    buffer::data::BufferData,
-    config::Config,
-    data::RegisterData,
-    state::{Mode, VisualMode},
-};
+use crate::{buffer::data::BufferData, config::Config};
 use std::cmp::{max, min, Ordering};
 
 #[derive(Copy, Clone)]
@@ -44,8 +43,7 @@ impl Cursor {
     pub fn offset(&self) -> usize {
         match &self.mode {
             CursorMode::Normal(offset) => *offset,
-            #[allow(unused_variables)]
-            CursorMode::Visual { start, end, mode } => *end,
+            CursorMode::Visual { end, .. } => *end,
             CursorMode::Insert(selection) => selection.get_cursor_offset(),
         }
     }
@@ -234,8 +232,7 @@ impl Cursor {
                 let line = buffer.line_of_offset(*offset);
                 (line, line)
             }
-            #[allow(unused_variables)]
-            CursorMode::Visual { start, end, mode } => {
+            CursorMode::Visual { start, end, .. } => {
                 let start_line = buffer.line_of_offset(*start.min(end));
                 let end_line = buffer.line_of_offset(*start.max(end));
                 (start_line, end_line)
@@ -500,6 +497,12 @@ impl SelRegion {
 pub struct Selection {
     regions: Vec<SelRegion>,
     last_inserted: usize,
+}
+
+impl AsRef<Selection> for Selection {
+    fn as_ref(&self) -> &Selection {
+        self
+    }
 }
 
 impl Selection {

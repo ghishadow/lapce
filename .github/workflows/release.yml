@@ -26,7 +26,7 @@ jobs:
       - name: Update rust
         run: rustup update
       - name: Build
-        run: cargo build --release
+        run: cargo build --profile release-lto
       - name: Gzip 
         run: |
           mkdir Lapce

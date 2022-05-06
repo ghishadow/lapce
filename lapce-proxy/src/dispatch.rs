@@ -399,13 +399,12 @@ impl Dispatcher {
                     "result": resp,
                 }));
             }
-            #[allow(unused_variables)]
-            BufferHead { buffer_id, path } => {
+            BufferHead { path, .. } => {
                 if let Some(workspace) = self.workspace.lock().clone() {
                     let result = file_get_head(&workspace, &path);
                     if let Ok((_blob_id, content)) = result {
                         let resp = BufferHeadResponse {
-                            id: "head".to_string(),
+                            version: "head".to_string(),
                             content,
                         };
                         let _ = self.sender.send(json!({
@@ -516,8 +515,7 @@ impl Dispatcher {
                     local_dispatcher.respond(id, result);
                 });
             }
-            #[allow(unused_variables)]
-            GetFiles { path } => {
+            GetFiles { .. } => {
                 if let Some(workspace) = self.workspace.lock().clone() {
                     let local_dispatcher = self.clone();
                     thread::spawn(move || {
