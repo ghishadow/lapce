@@ -196,13 +196,25 @@ mode = "i"
 [[keymaps]]
 key = "enter"
 command = "insert_new_line"
-when = "!list_focus"
+when = "!list_focus && !input_focus"
 mode = "i"
 
 [[keymaps]]
 key = "shift+enter"
 command = "search_backward"
 when = "search_focus"
+mode = "i"
+
+[[keymaps]]
+key = "enter"
+command = "search_forward"
+when = "search_focus"
+mode = "i"
+
+[[keymaps]]
+key = "enter"
+command = "global_search_refresh"
+when = "global_search_focus"
 mode = "i"
 
 [[keymaps]]
