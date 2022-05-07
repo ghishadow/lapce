@@ -8,7 +8,11 @@ use druid::{
     piet::{PietText, PietTextLayout, Text, TextAttribute, TextLayoutBuilder},
     Target,
 };
-use lapce_core::{buffer::Buffer, style::line_styles, syntax::Syntax};
+use lapce_core::{
+    buffer::{rope_diff, Buffer, DiffLines},
+    style::line_styles,
+    syntax::Syntax,
+};
 use lapce_rpc::{
     buffer::BufferHeadResponse,
     style::{LineStyle, LineStyles, Style},
@@ -16,10 +20,9 @@ use lapce_rpc::{
 use xi_rope::{spans::Spans, Rope};
 
 use crate::{
-    buffer::{rope_diff, BufferContent, DiffLines},
     command::{LapceUICommand, LAPCE_UI_COMMAND},
     config::{Config, LapceTheme},
-    document::{Document, TextLayoutCache},
+    document::{BufferContent, Document, TextLayoutCache},
 };
 
 #[derive(Clone)]
@@ -30,6 +33,26 @@ pub struct DocumentHisotry {
     line_styles: Rc<RefCell<LineStyles>>,
     changes: Arc<Vec<DiffLines>>,
     text_layouts: Rc<RefCell<TextLayoutCache>>,
+}
+
+impl druid::Data for DocumentHisotry {
+    fn same(&self, other: &Self) -> bool {
+        if !self.changes.same(&other.changes) {
+            return false;
+        }
+
+        if !self.styles.same(&other.styles) {
+            return false;
+        }
+
+        match (self.buffer.as_ref(), other.buffer.as_ref()) {
+            (None, None) => true,
+            (None, Some(_)) | (Some(_), None) => false,
+            (Some(buffer), Some(other_buffer)) => {
+                buffer.text().ptr_eq(other_buffer.text())
+            }
+        }
+    }
 }
 
 impl DocumentHisotry {

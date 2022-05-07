@@ -14,16 +14,15 @@ use lsp_types::Position;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    buffer::{Buffer, BufferContent},
     config::Config,
     data::{
         EditorTabChild, LapceData, LapceEditorData, LapceEditorTabData,
-        LapceMainSplitData, LapceTabData, LapceWindowData, SplitContent, SplitData,
+        LapceMainSplitData, LapceTabData, LapceWindowData, LapceWorkspace,
+        SplitContent, SplitData,
     },
-    document::Document,
+    document::{BufferContent, Document},
     editor::EditorLocationNew,
     split::SplitDirection,
-    state::LapceWorkspace,
 };
 
 pub enum SaveEvent {
@@ -277,13 +276,7 @@ impl EditorInfo {
                 },
             ));
 
-            if !data.open_files.contains_key(path) {
-                let buffer = Arc::new(Buffer::new(
-                    BufferContent::File(path.clone()),
-                    tab_id,
-                    event_sink.clone(),
-                ));
-                data.open_files.insert(path.clone(), buffer);
+            if !data.open_docs.contains_key(path) {
                 let doc = Arc::new(Document::new(
                     BufferContent::File(path.clone()),
                     tab_id,

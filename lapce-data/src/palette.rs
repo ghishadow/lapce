@@ -8,6 +8,7 @@ use fuzzy_matcher::FuzzyMatcher;
 use itertools::Itertools;
 use lapce_core::command::{EditCommand, FocusCommand};
 use lapce_core::mode::Mode;
+use lapce_core::movement::Movement;
 use lsp_types::{DocumentSymbolResponse, Range, SymbolKind};
 use serde_json;
 use std::cmp::Ordering;
@@ -17,8 +18,9 @@ use std::sync::Arc;
 use uuid::Uuid;
 
 use crate::command::CommandKind;
+use crate::data::{LapceWorkspace, LapceWorkspaceType};
+use crate::document::BufferContent;
 use crate::{
-    buffer::BufferContent,
     command::LAPCE_UI_COMMAND,
     command::{CommandExecuted, LAPCE_COMMAND},
     command::{LapceCommand, LapceUICommand},
@@ -27,10 +29,7 @@ use crate::{
     editor::EditorLocationNew,
     find::Find,
     keypress::{KeyPressData, KeyPressFocus},
-    movement::Movement,
     proxy::LapceProxy,
-    state::LapceWorkspace,
-    state::LapceWorkspaceType,
     terminal::TerminalSplitData,
 };
 
@@ -877,13 +876,14 @@ impl PaletteViewData {
             None => return,
         };
 
-        let buffer = self.main_split.editor_buffer(editor.view_id);
-        let last_line_number = buffer.last_line() + 1;
+        let doc = self.main_split.editor_doc(editor.view_id);
+        let last_line_number = doc.buffer().last_line() + 1;
         let last_line_number_len = last_line_number.to_string().len();
         let palette = Arc::make_mut(&mut self.palette);
-        palette.items = buffer
-            .rope()
-            .lines(0..buffer.len())
+        palette.items = doc
+            .buffer()
+            .text()
+            .lines(0..doc.buffer().len())
             .enumerate()
             .map(|(i, l)| {
                 let line_number = i + 1;

@@ -8,12 +8,11 @@ use druid::{
 };
 use lapce_core::command::FocusCommand;
 use lapce_data::{
-    buffer::BufferContent,
     command::{CommandKind, LapceCommand, LAPCE_COMMAND},
     config::LapceTheme,
-    data::LapceTabData,
+    data::{LapceTabData, LapceWorkspace},
+    document::BufferContent,
     editor::LapceEditorBufferData,
-    state::LapceWorkspace,
 };
 
 use crate::{
@@ -136,7 +135,7 @@ impl LapceEditorHeader {
                 clip_rect.x1 = icon.rect.x0;
             }
         }
-        if let BufferContent::File(path) = data.buffer.content() {
+        if let BufferContent::File(path) = data.doc.content() {
             ctx.with_save(|ctx| {
                 ctx.clip(clip_rect);
                 let mut path = path.clone();
