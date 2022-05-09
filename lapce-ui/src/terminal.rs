@@ -100,7 +100,7 @@ impl TerminalPanel {
             data.terminal.widget_id,
             split_id,
             SplitDirection::Vertical,
-            PanelHeaderKind::Simple("Terminal".to_string()),
+            PanelHeaderKind::Simple("Terminal".into()),
             vec![(
                 split_id,
                 PanelHeaderKind::None,
@@ -572,10 +572,9 @@ impl Widget<LapceTabData> for LapceTerminal {
                     key_event,
                     &mut term_data,
                     env,
-                ) {
-                    if term_data.terminal.mode == Mode::Terminal {
-                        term_data.send_keypress(key_event);
-                    }
+                ) && term_data.terminal.mode == Mode::Terminal
+                {
+                    term_data.send_keypress(key_event);
                 }
                 ctx.set_handled();
                 data.keypress = keypress.clone();

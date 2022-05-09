@@ -6,13 +6,13 @@ use druid::{
     Rect, RenderContext, Size, Target, UpdateCtx, Widget, WidgetId, WidgetPod,
 };
 use lapce_data::{
-    buffer::{BufferContent, LocalBufferKind},
     command::{LapceUICommand, LAPCE_UI_COMMAND},
     config::LapceTheme,
     data::{
         DragContent, EditorTabChild, LapceEditorTabData, LapceTabData, SplitContent,
     },
     db::EditorTabChildInfo,
+    document::{BufferContent, LocalBufferKind},
     editor::TabRect,
     split::{SplitDirection, SplitMoveDirection},
 };
@@ -355,7 +355,7 @@ impl Widget<LapceTabData> for LapceEditorTab {
                         {
                             let active = &tab.children[tab.active];
                             let EditorTabChildInfo::Editor(info) =
-                                active.child_info(data, 4);
+                                active.child_info(data);
 
                             if info.content
                                 == BufferContent::Local(LocalBufferKind::Empty)
@@ -370,7 +370,7 @@ impl Widget<LapceTabData> for LapceEditorTab {
                                     path: if let BufferContent::File(path) =
                                         info.content
                                     {
-                                        Some(path.clone())
+                                        Some(path)
                                     } else {
                                         None
                                     },
@@ -541,6 +541,7 @@ impl TabRectRenderer for TabRect {
     ) {
         let width = 13.0;
         let height = 13.0;
+        let padding = 4.0;
         let editor_tab = data.main_split.editor_tabs.get(&widget_id).unwrap();
 
         let rect = Size::new(width, height).to_rect().with_origin(Point::new(
@@ -582,7 +583,7 @@ impl TabRectRenderer for TabRect {
                 let svg = get_svg("close.svg").unwrap();
                 ctx.draw_svg(
                     &svg,
-                    self.close_rect.inflate(-4.0, -4.0),
+                    self.close_rect.inflate(-padding, -padding),
                     Some(
                         data.config
                             .get_color_unchecked(LapceTheme::EDITOR_FOREGROUND),
@@ -596,8 +597,8 @@ impl TabRectRenderer for TabRect {
             // See if any of the children are dirty
             let is_dirty = match &editor_tab.children[i] {
                 EditorTabChild::Editor(editor_id, _) => {
-                    let buffer = data.main_split.editor_buffer(*editor_id);
-                    buffer.dirty()
+                    let doc = data.main_split.editor_doc(*editor_id);
+                    doc.buffer().dirty()
                 }
             };
 
@@ -605,7 +606,7 @@ impl TabRectRenderer for TabRect {
                 let svg = get_svg("unsaved.svg").unwrap();
                 ctx.draw_svg(
                     &svg,
-                    self.close_rect.inflate(-4.0, -4.0),
+                    self.close_rect.inflate(-padding, -padding),
                     Some(
                         data.config
                             .get_color_unchecked(LapceTheme::EDITOR_FOREGROUND),

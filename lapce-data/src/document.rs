@@ -16,7 +16,7 @@ use druid::{
     ExtEventSink, FontFamily, Point, Target, Vec2, WidgetId,
 };
 use lapce_core::{
-    buffer::{Buffer, InvalLines},
+    buffer::{Buffer, DiffLines, InvalLines},
     command::{EditCommand, MultiSelectionCommand},
     cursor::{ColPosition, Cursor, CursorMode},
     editor::{EditType, Editor},
@@ -29,14 +29,14 @@ use lapce_core::{
     word::WordCursor,
 };
 use lapce_rpc::{
-    buffer::{BufferHeadResponse, BufferId, NewBufferResponse},
+    buffer::{BufferId, NewBufferResponse},
     style::{LineStyle, LineStyles, Style},
 };
 use lsp_types::CodeActionResponse;
+use serde::{Deserialize, Serialize};
 use xi_rope::{spans::Spans, Rope, RopeDelta};
 
 use crate::{
-    buffer::{rope_diff, BufferContent, DiffLines, DiffResult, LocalBufferKind},
     command::{LapceUICommand, LAPCE_UI_COMMAND},
     config::{Config, LapceTheme},
     editor::EditorLocationNew,
@@ -97,6 +97,69 @@ impl TextLayoutCache {
     }
 }
 
+#[derive(Clone, PartialEq, Eq, Hash, Serialize, Deserialize, Debug)]
+pub enum LocalBufferKind {
+    Empty,
+    Palette,
+    Search,
+    SourceControl,
+    FilePicker,
+    Keymap,
+    Settings,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub enum BufferContent {
+    File(PathBuf),
+    Local(LocalBufferKind),
+    Value(String),
+}
+
+impl BufferContent {
+    pub fn is_file(&self) -> bool {
+        matches!(self, BufferContent::File(_))
+    }
+
+    pub fn is_special(&self) -> bool {
+        match &self {
+            BufferContent::File(_) => false,
+            BufferContent::Local(local) => match local {
+                LocalBufferKind::Search
+                | LocalBufferKind::Palette
+                | LocalBufferKind::SourceControl
+                | LocalBufferKind::FilePicker
+                | LocalBufferKind::Settings
+                | LocalBufferKind::Keymap => true,
+                LocalBufferKind::Empty => false,
+            },
+            BufferContent::Value(_) => true,
+        }
+    }
+
+    pub fn is_input(&self) -> bool {
+        match &self {
+            BufferContent::File(_) => false,
+            BufferContent::Local(local) => match local {
+                LocalBufferKind::Search
+                | LocalBufferKind::Palette
+                | LocalBufferKind::FilePicker
+                | LocalBufferKind::Settings
+                | LocalBufferKind::Keymap => true,
+                LocalBufferKind::Empty | LocalBufferKind::SourceControl => false,
+            },
+            BufferContent::Value(_) => true,
+        }
+    }
+
+    pub fn is_search(&self) -> bool {
+        match &self {
+            BufferContent::File(_) => false,
+            BufferContent::Value(_) => false,
+            BufferContent::Local(local) => matches!(local, LocalBufferKind::Search),
+        }
+    }
+}
+
 #[derive(Clone)]
 pub struct Document {
     id: BufferId,
@@ -126,12 +189,18 @@ impl Document {
         event_sink: ExtEventSink,
         proxy: Arc<LapceProxy>,
     ) -> Self {
+        let syntax = match &content {
+            BufferContent::File(path) => Syntax::init(path),
+            BufferContent::Local(_) => None,
+            BufferContent::Value(_) => None,
+        };
+
         Self {
             id: BufferId::next(),
             tab_id,
             buffer: Buffer::new(""),
             content,
-            syntax: None,
+            syntax,
             line_styles: Rc::new(RefCell::new(HashMap::new())),
             text_layouts: Rc::new(RefCell::new(TextLayoutCache::new())),
             semantic_styles: None,
@@ -162,6 +231,10 @@ impl Document {
 
     pub fn rev(&self) -> u64 {
         self.buffer.rev()
+    }
+
+    pub fn set_rev(&mut self, rev: u64) {
+        self.buffer.set_rev(rev)
     }
 
     pub fn load_content(&mut self, content: &str) {
@@ -236,6 +309,94 @@ impl Document {
 
     pub fn get_history(&self, version: &str) -> Option<&DocumentHisotry> {
         self.histories.get(version)
+    }
+
+    pub fn history_visual_line(&self, version: &str, line: usize) -> usize {
+        let mut visual_line = 0;
+        if let Some(history) = self.histories.get(version) {
+            for (_i, change) in history.changes().iter().enumerate() {
+                match change {
+                    DiffLines::Left(range) => {
+                        visual_line += range.len();
+                    }
+                    DiffLines::Both(_, r) | DiffLines::Right(r) => {
+                        if r.contains(&line) {
+                            visual_line += line - r.start;
+                            break;
+                        }
+                        visual_line += r.len();
+                    }
+                    DiffLines::Skip(_, r) => {
+                        if r.contains(&line) {
+                            break;
+                        }
+                        visual_line += 1;
+                    }
+                }
+            }
+        }
+        visual_line
+    }
+
+    pub fn history_actual_line_from_visual(
+        &self,
+        version: &str,
+        visual_line: usize,
+    ) -> usize {
+        let mut current_visual_line = 0;
+        let mut line = 0;
+        if let Some(history) = self.histories.get(version) {
+            for (i, change) in history.changes().iter().enumerate() {
+                match change {
+                    DiffLines::Left(range) => {
+                        current_visual_line += range.len();
+                        if current_visual_line > visual_line {
+                            if let Some(change) = history.changes().get(i + 1) {
+                                match change {
+                                    DiffLines::Left(_) => {}
+                                    DiffLines::Both(_, r)
+                                    | DiffLines::Skip(_, r)
+                                    | DiffLines::Right(r) => {
+                                        line = r.start;
+                                    }
+                                }
+                            } else if i > 0 {
+                                if let Some(change) = history.changes().get(i - 1) {
+                                    match change {
+                                        DiffLines::Left(_) => {}
+                                        DiffLines::Both(_, r)
+                                        | DiffLines::Skip(_, r)
+                                        | DiffLines::Right(r) => {
+                                            line = r.end - 1;
+                                        }
+                                    }
+                                }
+                            }
+                            break;
+                        }
+                    }
+                    DiffLines::Skip(_, r) => {
+                        current_visual_line += 1;
+                        if current_visual_line > visual_line {
+                            line = r.end;
+                            break;
+                        }
+                    }
+                    DiffLines::Both(_, r) | DiffLines::Right(r) => {
+                        current_visual_line += r.len();
+                        if current_visual_line > visual_line {
+                            line = r.end - (current_visual_line - visual_line);
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+        if current_visual_line <= visual_line {
+            self.buffer.last_line()
+        } else {
+            line
+        }
     }
 
     fn trigger_head_change(&self) {
@@ -708,12 +869,17 @@ impl Document {
         self.apply_deltas(&deltas)
     }
 
+    pub fn styles(&self) -> Option<&Arc<Spans<Style>>> {
+        let styles = self
+            .semantic_styles
+            .as_ref()
+            .or_else(|| self.syntax().and_then(|s| s.styles.as_ref()));
+        styles
+    }
+
     fn line_style(&self, line: usize) -> Arc<Vec<LineStyle>> {
         if self.line_styles.borrow().get(&line).is_none() {
-            let styles = self
-                .semantic_styles
-                .as_ref()
-                .or_else(|| self.syntax().and_then(|s| s.styles.as_ref()));
+            let styles = self.styles();
 
             let line_styles = styles
                 .map(|styles| line_styles(self.buffer.text(), line, styles))
@@ -744,14 +910,18 @@ impl Document {
         point: Point,
         font_size: usize,
         config: &Config,
-    ) -> usize {
+    ) -> (usize, bool) {
         let last_line = self.buffer.last_line();
         let line = ((point.y / config.editor.line_height as f64).floor() as usize)
             .min(last_line);
         let text_layout = self.get_text_layout(text, line, font_size, config);
-        let col = text_layout.hit_test_point(Point::new(point.x, 0.0)).idx;
+        let hit_point = text_layout.hit_test_point(Point::new(point.x, 0.0));
+        let col = hit_point.idx;
         let max_col = self.buffer.line_end_col(line, mode != Mode::Normal);
-        self.buffer.offset_of_line_col(line, col.min(max_col))
+        (
+            self.buffer.offset_of_line_col(line, col.min(max_col)),
+            hit_point.is_inside,
+        )
     }
 
     pub fn point_of_offset(
@@ -862,6 +1032,7 @@ impl Document {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn move_region(
         &self,
         text: &mut PietText,
@@ -890,6 +1061,7 @@ impl Document {
         SelRegion::new(start, end, horiz)
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn move_cursor(
         &mut self,
         text: &mut PietText,
@@ -988,11 +1160,12 @@ impl Document {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn move_selection(
         &self,
         text: &mut PietText,
         selection: &Selection,
-        horiz: Option<&ColPosition>,
+        _horiz: Option<&ColPosition>,
         count: usize,
         modify: bool,
         movement: &Movement,
@@ -1009,6 +1182,7 @@ impl Document {
         new_selection
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn move_offset(
         &self,
         text: &mut PietText,

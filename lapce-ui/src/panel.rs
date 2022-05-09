@@ -1,5 +1,7 @@
+use std::sync::Arc;
+
 use druid::{
-    piet::{Text, TextLayout, TextLayoutBuilder},
+    piet::{Text, TextLayout, TextLayoutBuilder, TextStorage},
     BoxConstraints, Command, Env, Event, EventCtx, FontFamily, LayoutCtx, LifeCycle,
     LifeCycleCtx, MouseEvent, PaintCtx, Point, RenderContext, Size, Target,
     UpdateCtx, Widget, WidgetExt, WidgetId, WidgetPod,
@@ -122,7 +124,7 @@ impl LapcePanel {
         }
         let header = match header {
             PanelHeaderKind::None => {
-                PanelMainHeader::new(widget_id, kind, "".to_string()).boxed()
+                PanelMainHeader::new(widget_id, kind, "".into()).boxed()
             }
             PanelHeaderKind::Simple(s) => {
                 PanelMainHeader::new(widget_id, kind, s).boxed()
@@ -132,14 +134,42 @@ impl LapcePanel {
         Self {
             widget_id,
             split: WidgetPod::new(split),
-            header: WidgetPod::new(header.boxed()),
+            header: WidgetPod::new(header),
+        }
+    }
+}
+
+/// An immutable piece of string that is cheap to clone.
+#[derive(Clone)]
+pub enum ReadOnlyString {
+    Static(&'static str),
+    String(Arc<str>),
+}
+
+impl From<&'static str> for ReadOnlyString {
+    fn from(str: &'static str) -> Self {
+        Self::Static(str)
+    }
+}
+
+impl From<String> for ReadOnlyString {
+    fn from(str: String) -> Self {
+        Self::String(Arc::from(str))
+    }
+}
+
+impl TextStorage for ReadOnlyString {
+    fn as_str(&self) -> &str {
+        match self {
+            ReadOnlyString::Static(str) => *str,
+            ReadOnlyString::String(str) => str.as_ref(),
         }
     }
 }
 
 pub enum PanelHeaderKind {
     None,
-    Simple(String),
+    Simple(ReadOnlyString),
     Widget(Box<dyn Widget<LapceTabData>>),
 }
 
@@ -147,7 +177,10 @@ pub struct PanelSection {
     #[allow(dead_code)]
     widget_id: WidgetId,
     header: Option<WidgetPod<LapceTabData, Box<dyn Widget<LapceTabData>>>>,
-    content: WidgetPod<LapceTabData, Box<dyn Widget<LapceTabData>>>,
+    content: WidgetPod<
+        LapceTabData,
+        LapceScrollNew<LapceTabData, Box<dyn Widget<LapceTabData>>>,
+    >,
 }
 
 impl PanelSection {
@@ -156,7 +189,7 @@ impl PanelSection {
         header: Option<Box<dyn Widget<LapceTabData>>>,
         content: Box<dyn Widget<LapceTabData>>,
     ) -> Self {
-        let content = LapceScrollNew::new(content).vertical().boxed();
+        let content = LapceScrollNew::new(content).vertical();
         Self {
             widget_id,
             header: header.map(WidgetPod::new),
@@ -166,7 +199,7 @@ impl PanelSection {
 
     pub fn new_simple(
         widget_id: WidgetId,
-        header: String,
+        header: ReadOnlyString,
         content: Box<dyn Widget<LapceTabData>>,
     ) -> Self {
         let header = PanelSectionHeader::new(header).boxed();
@@ -260,11 +293,11 @@ impl Widget<LapceTabData> for PanelSection {
 }
 
 pub struct PanelSectionHeader {
-    text: String,
+    text: ReadOnlyString,
 }
 
 impl PanelSectionHeader {
-    pub fn new(text: String) -> Self {
+    pub fn new(text: ReadOnlyString) -> Self {
         Self { text }
     }
 }
@@ -344,7 +377,7 @@ impl Widget<LapceTabData> for PanelSectionHeader {
 /// This struct is used as the outer container for a panel,
 /// it contains the heading such as "Terminal" or "File Explorer".
 pub struct PanelMainHeader {
-    text: String,
+    text: ReadOnlyString,
     icons: Vec<LapceIcon>,
 
     #[allow(dead_code)]
@@ -354,7 +387,11 @@ pub struct PanelMainHeader {
 }
 
 impl PanelMainHeader {
-    pub fn new(panel_widget_id: WidgetId, kind: PanelKind, text: String) -> Self {
+    pub fn new(
+        panel_widget_id: WidgetId,
+        kind: PanelKind,
+        text: ReadOnlyString,
+    ) -> Self {
         Self {
             panel_widget_id,
             kind,
