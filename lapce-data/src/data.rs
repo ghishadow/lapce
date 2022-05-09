@@ -339,7 +339,7 @@ impl LapceWindowData {
 #[derive(Clone)]
 pub struct EditorDiagnostic {
     pub range: Option<(usize, usize)>,
-    pub diagnositc: Diagnostic,
+    pub diagnostic: Diagnostic,
 }
 
 #[derive(Clone, Copy, PartialEq, Data, Serialize, Deserialize, Hash, Eq, Debug)]
@@ -1036,7 +1036,7 @@ impl LapceTabData {
                 } else {
                     let picker = Arc::make_mut(&mut self.picker);
                     picker.active = true;
-                    if let Some(node) = picker.get_file_node(&picker.pwd) {
+                    if let Some(node) = picker.root.get_file_node(&picker.pwd) {
                         if !node.read {
                             let tab_id = self.id;
                             let path = node.path_buf.clone();
@@ -1107,7 +1107,7 @@ impl LapceTabData {
                 } else {
                     let picker = Arc::make_mut(&mut self.picker);
                     picker.active = true;
-                    if let Some(node) = picker.get_file_node(&picker.pwd) {
+                    if let Some(node) = picker.root.get_file_node(&picker.pwd) {
                         if !node.read {
                             let tab_id = self.id;
                             let path = node.path_buf.clone();
@@ -1728,6 +1728,29 @@ impl LapceTabData {
             };
         }
     }
+
+    pub fn handle_file_change(&mut self, event: &notify::Event) {
+        if let Some(workspace) =
+            Arc::make_mut(&mut self.file_explorer).workspace.as_mut()
+        {
+            match &event.kind {
+                notify::EventKind::Create(creat_kind) => {
+                    for path in event.paths.iter() {
+                        workspace.add_child(
+                            path,
+                            creat_kind == &notify::event::CreateKind::Folder,
+                        );
+                    }
+                }
+                notify::EventKind::Remove(_) => {
+                    for path in event.paths.iter() {
+                        workspace.remove_child(path);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
 }
 
 pub struct LapceTabLens(pub WidgetId);
@@ -1986,17 +2009,17 @@ impl LapceMainSplitData {
         );
     }
 
-    fn initiate_diagnositcs_offset(&mut self, path: &Path) {
+    fn initiate_diagnostics_offset(&mut self, path: &Path) {
         if let Some(diagnostics) = self.diagnostics.get_mut(path) {
             if let Some(doc) = self.open_docs.get(path) {
                 for diagnostic in Arc::make_mut(diagnostics).iter_mut() {
                     if diagnostic.range.is_none() {
                         diagnostic.range = Some((
                             doc.buffer().offset_of_position(
-                                &diagnostic.diagnositc.range.start,
+                                &diagnostic.diagnostic.range.start,
                             ),
                             doc.buffer().offset_of_position(
-                                &diagnostic.diagnositc.range.end,
+                                &diagnostic.diagnostic.range.end,
                             ),
                         ));
                     }
@@ -2005,7 +2028,7 @@ impl LapceMainSplitData {
         }
     }
 
-    fn update_diagnositcs_offset(&mut self, path: &Path, delta: &RopeDelta) {
+    fn update_diagnostics_offset(&mut self, path: &Path, delta: &RopeDelta) {
         if let Some(diagnostics) = self.diagnostics.get_mut(path) {
             if let Some(doc) = self.open_docs.get(path) {
                 let mut transformer = Transformer::new(delta);
@@ -2017,11 +2040,11 @@ impl LapceMainSplitData {
                     );
                     diagnostic.range = Some((new_start, new_end));
                     if start != new_start {
-                        diagnostic.diagnositc.range.start =
+                        diagnostic.diagnostic.range.start =
                             doc.buffer().offset_to_position(new_start);
                     }
                     if end != new_end {
-                        diagnostic.diagnositc.range.end =
+                        diagnostic.diagnostic.range.end =
                             doc.buffer().offset_to_position(new_end);
                         doc.buffer().offset_to_position(new_end);
                     }
@@ -2046,7 +2069,7 @@ impl LapceMainSplitData {
         edits: &[(impl AsRef<Selection>, &str)],
         edit_type: EditType,
     ) -> Option<RopeDelta> {
-        self.initiate_diagnositcs_offset(path);
+        self.initiate_diagnostics_offset(path);
         let doc = self.open_docs.get_mut(path)?;
 
         let buffer_len = doc.buffer().len();
@@ -2065,7 +2088,7 @@ impl LapceMainSplitData {
         if move_cursor {
             self.cursor_apply_delta(path, &delta);
         }
-        self.update_diagnositcs_offset(path, &delta);
+        self.update_diagnostics_offset(path, &delta);
         Some(delta)
     }
 

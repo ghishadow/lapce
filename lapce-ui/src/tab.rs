@@ -1,7 +1,6 @@
 use std::{collections::HashMap, path::PathBuf, sync::Arc};
 
 use druid::{
-    kurbo::Line,
     piet::{PietTextLayout, Text, TextLayout, TextLayoutBuilder},
     BoxConstraints, Command, Data, Env, Event, EventCtx, FontFamily,
     InternalLifeCycle, LayoutCtx, LifeCycle, LifeCycleCtx, PaintCtx, Point, Rect,
@@ -41,7 +40,7 @@ use crate::{
     picker::FilePicker, plugin::Plugin, problem::new_problem_panel,
     search::new_search_panel, settings::LapceSettingsPanel,
     source_control::new_source_control_panel, split::split_data_widget,
-    status::LapceStatusNew, terminal::TerminalPanel,
+    status::LapceStatusNew, svg::get_svg, terminal::TerminalPanel,
 };
 
 pub struct LapceIcon {
@@ -457,6 +456,10 @@ impl Widget<LapceTabData> for LapceTabNew {
                         data.set_picker_pwd(path.clone());
                         ctx.set_handled();
                     }
+                    LapceUICommand::FileChange(event) => {
+                        data.handle_file_change(event);
+                        ctx.set_handled();
+                    }
                     LapceUICommand::CloseTerminal(id) => {
                         let terminal_panel = Arc::make_mut(&mut data.terminal);
                         if let Some(terminal) = terminal_panel.terminals.get_mut(id)
@@ -542,7 +545,7 @@ impl Widget<LapceTabData> for LapceTabNew {
                             .iter()
                             .map(|d| EditorDiagnostic {
                                 range: None,
-                                diagnositc: d.clone(),
+                                diagnostic: d.clone(),
                             })
                             .collect();
                         data.main_split
@@ -554,7 +557,7 @@ impl Widget<LapceTabData> for LapceTabNew {
                         for (_, diagnositics) in data.main_split.diagnostics.iter() {
                             for diagnositic in diagnositics.iter() {
                                 if let Some(severity) =
-                                    diagnositic.diagnositc.severity
+                                    diagnositic.diagnostic.severity
                                 {
                                     match severity {
                                         DiagnosticSeverity::Error => errors += 1,
@@ -950,6 +953,7 @@ impl Widget<LapceTabData> for LapceTabNew {
                     }
                     LapceUICommand::UpdatePickerItems(path, items) => {
                         Arc::make_mut(&mut data.picker)
+                            .root
                             .set_item_children(path, items.clone());
                         ctx.set_handled();
                     }
@@ -985,7 +989,7 @@ impl Widget<LapceTabData> for LapceTabNew {
         self.main_split.event(ctx, event, data, env);
         self.status.event(ctx, event, data, env);
         for (_, panel) in data.panels.clone().iter() {
-            if panel.is_shown() {
+            if panel.is_shown() || event.should_propagate_to_hidden() {
                 self.panels
                     .get_mut(&panel.active)
                     .unwrap()
@@ -1476,13 +1480,13 @@ impl Widget<LapceTabData> for LapceTabNew {
 pub struct LapceTabHeader {
     pub drag_start: Option<(Point, Point)>,
     pub mouse_pos: Point,
-    cross_rect: Rect,
+    close_icon_rect: Rect,
 }
 
 impl LapceTabHeader {
     pub fn new() -> Self {
         Self {
-            cross_rect: Rect::ZERO,
+            close_icon_rect: Rect::ZERO,
             drag_start: None,
             mouse_pos: Point::ZERO,
         }
@@ -1511,14 +1515,14 @@ impl Widget<LapceTabData> for LapceTabHeader {
                     }
                     return;
                 }
-                if self.cross_rect.contains(mouse_event.pos) {
+                if self.close_icon_rect.contains(mouse_event.pos) {
                     ctx.set_cursor(&druid::Cursor::Pointer);
                 } else {
                     ctx.set_cursor(&druid::Cursor::Arrow);
                 }
             }
             Event::MouseDown(mouse_event) => {
-                if self.cross_rect.contains(mouse_event.pos) {
+                if self.close_icon_rect.contains(mouse_event.pos) {
                     ctx.submit_command(Command::new(
                         LAPCE_UI_COMMAND,
                         LapceUICommand::CloseTabId(data.id),
@@ -1574,11 +1578,12 @@ impl Widget<LapceTabData> for LapceTabHeader {
     ) -> Size {
         let size = bc.max();
 
-        let cross_size = 8.0;
-        let padding = (size.height - cross_size) / 2.0;
-        let origin = Point::new(size.width - padding - cross_size, padding);
-        self.cross_rect = Size::new(cross_size, cross_size)
+        let close_icon_width = size.height;
+        let padding = 4.0;
+        let origin = Point::new(size.width - close_icon_width, padding);
+        self.close_icon_rect = Size::new(close_icon_width, close_icon_width)
             .to_rect()
+            .inflate(-padding, -padding)
             .with_origin(origin);
 
         size
@@ -1622,29 +1627,14 @@ impl Widget<LapceTabData> for LapceTabHeader {
         ctx.draw_text(&text_layout, Point::new(x, y));
 
         if ctx.is_hot() {
-            let line = Line::new(
-                Point::new(self.cross_rect.x0, self.cross_rect.y0),
-                Point::new(self.cross_rect.x1, self.cross_rect.y1),
-            );
-            ctx.stroke(
-                line,
-                &data
-                    .config
-                    .get_color_unchecked(LapceTheme::EDITOR_FOREGROUND)
-                    .clone(),
-                1.0,
-            );
-            let line = Line::new(
-                Point::new(self.cross_rect.x1, self.cross_rect.y0),
-                Point::new(self.cross_rect.x0, self.cross_rect.y1),
-            );
-            ctx.stroke(
-                line,
-                &data
-                    .config
-                    .get_color_unchecked(LapceTheme::EDITOR_FOREGROUND)
-                    .clone(),
-                1.0,
+            let svg = get_svg("close.svg").unwrap();
+            ctx.draw_svg(
+                &svg,
+                self.close_icon_rect,
+                Some(
+                    data.config
+                        .get_color_unchecked(LapceTheme::EDITOR_FOREGROUND),
+                ),
             );
         }
     }
