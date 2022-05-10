@@ -584,7 +584,6 @@ impl Widget<LapceTabData> for LapceTabNew {
                     }
                     LapceUICommand::BufferSave(path, rev) => {
                         let doc = data.main_split.open_docs.get_mut(path).unwrap();
-                        println!("buffer save {rev} {}", doc.rev());
                         if doc.rev() == *rev {
                             Arc::make_mut(doc).buffer_mut().set_pristine();
                         }
@@ -792,9 +791,13 @@ impl Widget<LapceTabData> for LapceTabNew {
                         }
                         ctx.set_handled();
                     }
+                    LapceUICommand::OpenFileChanged { path, content } => {
+                        let doc = data.main_split.open_docs.get_mut(path).unwrap();
+                        let doc = Arc::make_mut(doc);
+                        doc.handle_file_changed(content.to_owned());
+                    }
                     LapceUICommand::ReloadBuffer { path, rev, content } => {
                         let doc = data.main_split.open_docs.get_mut(path).unwrap();
-                        println!("rev {rev} {}", doc.rev());
                         if doc.rev() + 1 == *rev {
                             let doc = Arc::make_mut(doc);
                             doc.reload(content.to_owned());
