@@ -6,19 +6,18 @@ use druid::{
     LifeCycleCtx, MouseEvent, PaintCtx, Point, Rect, RenderContext, Size, Target,
     UpdateCtx, Widget, WidgetId,
 };
+use lapce_core::command::FocusCommand;
 use lapce_data::{
-    buffer::BufferContent,
-    command::{CommandTarget, LapceCommand, LapceCommandNew, LAPCE_NEW_COMMAND},
+    command::{CommandKind, LapceCommand, LAPCE_COMMAND},
     config::LapceTheme,
-    data::LapceTabData,
+    data::{LapceTabData, LapceWorkspace},
+    document::BufferContent,
     editor::LapceEditorBufferData,
-    state::LapceWorkspace,
-    
 };
 
 use crate::{
     svg::{file_svg_new, get_svg},
-    tab::LapceIcon
+    tab::LapceIcon,
 };
 
 pub struct LapceEditorHeader {
@@ -61,12 +60,10 @@ impl LapceEditorHeader {
                 .to_rect()
                 .with_origin(Point::new(x, gap)),
             command: Command::new(
-                LAPCE_NEW_COMMAND,
-                LapceCommandNew {
-                    cmd: LapceCommand::SplitClose.to_string(),
+                LAPCE_COMMAND,
+                LapceCommand {
+                    kind: CommandKind::Focus(FocusCommand::SplitClose),
                     data: None,
-                    palette_desc: None,
-                    target: CommandTarget::Focus,
                 },
                 Target::Widget(self.view_id),
             ),
@@ -81,12 +78,10 @@ impl LapceEditorHeader {
                 .to_rect()
                 .with_origin(Point::new(x, gap)),
             command: Command::new(
-                LAPCE_NEW_COMMAND,
-                LapceCommandNew {
-                    cmd: LapceCommand::SplitVertical.to_string(),
+                LAPCE_COMMAND,
+                LapceCommand {
+                    kind: CommandKind::Focus(FocusCommand::SplitVertical),
                     data: None,
-                    palette_desc: None,
-                    target: CommandTarget::Focus,
                 },
                 Target::Widget(self.view_id),
             ),
@@ -120,7 +115,8 @@ impl LapceEditorHeader {
         workspace: &LapceWorkspace,
     ) {
         let shadow_width = 5.0;
-        let rect = ctx.size().to_rect();
+        let size = ctx.size();
+        let rect = size.to_rect();
         ctx.blurred_rect(
             rect,
             shadow_width,
@@ -139,7 +135,7 @@ impl LapceEditorHeader {
                 clip_rect.x1 = icon.rect.x0;
             }
         }
-        if let BufferContent::File(path) = data.buffer.content() {
+        if let BufferContent::File(path) = data.doc.content() {
             ctx.with_save(|ctx| {
                 ctx.clip(clip_rect);
                 let mut path = path.clone();
@@ -157,7 +153,7 @@ impl LapceEditorHeader {
                     .and_then(|s| s.to_str())
                     .unwrap_or("")
                     .to_string();
-                if data.buffer.dirty() {
+                if !data.doc.buffer().is_pristine() {
                     file_name = "*".to_string() + &file_name;
                 }
                 if let Some(_compare) = data.editor.compare.as_ref() {
@@ -174,7 +170,13 @@ impl LapceEditorHeader {
                     )
                     .build()
                     .unwrap();
-                ctx.draw_text(&text_layout, Point::new(30.0, 7.0));
+                ctx.draw_text(
+                    &text_layout,
+                    Point::new(
+                        30.0,
+                        (size.height - text_layout.size().height) / 2.0,
+                    ),
+                );
 
                 if let Some(workspace_path) = workspace.path.as_ref() {
                     path = path
@@ -201,7 +203,13 @@ impl LapceEditorHeader {
                         )
                         .build()
                         .unwrap();
-                    ctx.draw_text(&text_layout, Point::new(30.0 + x + 5.0, 7.0));
+                    ctx.draw_text(
+                        &text_layout,
+                        Point::new(
+                            30.0 + x + 5.0,
+                            (size.height - text_layout.size().height) / 2.0,
+                        ),
+                    );
                 }
             });
         }
