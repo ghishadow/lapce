@@ -14,15 +14,15 @@ use lsp_types::Position;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    buffer::{Buffer, BufferContent},
     config::Config,
     data::{
         EditorTabChild, LapceData, LapceEditorData, LapceEditorTabData,
-        LapceMainSplitData, LapceTabData, LapceWindowData, SplitContent, SplitData,
+        LapceMainSplitData, LapceTabData, LapceWindowData, LapceWorkspace,
+        SplitContent, SplitData,
     },
+    document::{BufferContent, Document},
     editor::EditorLocationNew,
     split::SplitDirection,
-    state::LapceWorkspace,
 };
 
 pub enum SaveEvent {
@@ -276,13 +276,14 @@ impl EditorInfo {
                 },
             ));
 
-            if !data.open_files.contains_key(path) {
-                let buffer = Arc::new(Buffer::new(
+            if !data.open_docs.contains_key(path) {
+                let doc = Arc::new(Document::new(
                     BufferContent::File(path.clone()),
                     tab_id,
                     event_sink,
+                    data.proxy.clone(),
                 ));
-                data.open_files.insert(path.clone(), buffer);
+                data.open_docs.insert(path.clone(), doc);
             }
         }
         data.insert_editor(Arc::new(editor_data.clone()), config);
@@ -485,13 +486,13 @@ impl LapceDb {
         Ok(())
     }
 
-    pub fn save_buffer_position(&self, workspace: &LapceWorkspace, buffer: &Buffer) {
-        if let BufferContent::File(path) = buffer.content() {
+    pub fn save_doc_position(&self, workspace: &LapceWorkspace, doc: &Document) {
+        if let BufferContent::File(path) = doc.content() {
             let info = BufferInfo {
                 workspace: workspace.clone(),
                 path: path.clone(),
-                scroll_offset: (buffer.scroll_offset.x, buffer.scroll_offset.y),
-                cursor_offset: buffer.cursor_offset,
+                scroll_offset: (doc.scroll_offset.x, doc.scroll_offset.y),
+                cursor_offset: doc.cursor_offset,
             };
             let _ = self.save_tx.send(SaveEvent::Buffer(info));
         }

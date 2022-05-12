@@ -28,6 +28,8 @@ Lapce is written in pure Rust, with the UI in [Druid](https://github.com/lineben
 
 ![](https://github.com/lapce/lapce/blob/master/extra/images/screenshot.png?raw=true)
 
+[![Packaging status](https://repology.org/badge/vertical-allrepos/lapce.svg)](https://repology.org/project/lapce/versions)
+
 ## Features
 
 * Modal Editing (Vim like) support as first class citizen (can be turned off as well)
@@ -35,6 +37,8 @@ Lapce is written in pure Rust, with the UI in [Druid](https://github.com/lineben
 * Built-in remote development support (inspired by [VSCode Remote Development](https://code.visualstudio.com/docs/remote/remote-overview)) for a seamless "local" experience, benefiting from the full power of the remote system.
 * Plugins can be written in programming languages that can compile to the [WASI](https://wasi.dev/) format (C, Rust, [AssemblyScript](https://www.assemblyscript.org/))
 * Built-in terminal, so you can execute commands in your workspace, without leaving Lapce.
+
+
 
 ## Contributing
 
