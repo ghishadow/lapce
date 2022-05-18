@@ -1,19 +1,18 @@
 on: 
-  pull_request:
-    types: [opened, synchronize, reopened, ready_for_review]
+  push:
+    branches:
+      - master
 
-name: Pull request checks
+name: CI
 
 jobs:
-  check:
+  build:
     name: Rust (${{ matrix.toolchain }}) on ${{ matrix.os }}
-    if: github.event.pull_request.draft == false
-
     strategy:
+      fail-fast: false
       matrix:
         os: [ ubuntu-latest, windows-latest, macos-latest ]
         toolchain: [ stable ]
-
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v2
@@ -29,21 +28,9 @@ jobs:
           
       - uses: actions-rs/cargo@v1
         with:
-          command: test
-          args: --workspace
-
-  fmt:
-    name: Rustfmt
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v2
-      - uses: actions-rs/toolchain@v1
-        with:
-          profile: minimal
-          toolchain: stable
-          override: true
-      - run: rustup component add rustfmt
+          command: build
+  
       - uses: actions-rs/cargo@v1
         with:
-          command: fmt
-          args: --all -- --check
+          command: test
+          args: --workspace
