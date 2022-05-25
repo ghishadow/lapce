@@ -130,6 +130,8 @@ pub enum LapceLanguage {
     Html,
     #[cfg(feature = "lang-java")]
     Java,
+    #[cfg(feature = "lapce-jakt")]
+    Jakt,
 }
 
 // NOTE: Elements in the array must be in the same order as the enum variants of
@@ -327,6 +329,16 @@ const LANGUAGES: &[SyntaxProperties] = &[
         indent: "  ",
         code_lens: (DEFAULT_CODE_LENS_LIST, DEFAULT_CODE_LENS_IGNORE_LIST),
         extensions: &["java"],
+    },
+    #[cfg(feature = "lang-jakt")]
+    SyntaxProperties {
+        id: LapceLanguage::Jakt,
+        language: tree_sitter_jakt::language,
+        highlight: tree_sitter_jakt::HIGHLIGHT_QUERY,
+        comment: "//",
+        indent: "  ",
+        code_lens: (DEFAULT_CODE_LENS_LIST, DEFAULT_CODE_LENS_IGNORE_LIST),
+        extensions: &["jakt"],
     },
 ];
 
@@ -545,5 +557,11 @@ mod test {
     #[cfg(feature = "lang-java")]
     fn test_java_lang() {
         assert_language(LapceLanguage::Java, &["java"]);
+    }
+
+    #[test]
+    #[cfg(feature = "lang-jakt")]
+    fn test_jakt_lang() {
+        assert_language(LapceLanguage::Jakt, &["jakt"]);
     }
 }
