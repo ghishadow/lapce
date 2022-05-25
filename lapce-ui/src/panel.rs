@@ -332,7 +332,6 @@ impl Widget<LapceTabData> for PanelSectionHeader {
     }
 
     fn paint(&mut self, ctx: &mut PaintCtx, data: &LapceTabData, _env: &Env) {
-        let shadow_width = 5.0;
         let rect = ctx.size().to_rect();
         ctx.with_save(|ctx| {
             ctx.fill(
@@ -340,7 +339,8 @@ impl Widget<LapceTabData> for PanelSectionHeader {
                 data.config
                     .get_color_unchecked(LapceTheme::EDITOR_BACKGROUND),
             );
-            if data.config.ui.drop_shadow() {
+            let shadow_width = data.config.ui.drop_shadow_width() as f64;
+            if shadow_width > 0.0 {
                 ctx.blurred_rect(
                     rect,
                     shadow_width,
@@ -539,18 +539,19 @@ impl Widget<LapceTabData> for PanelMainHeader {
         data: &LapceTabData,
         _env: &Env,
     ) -> Size {
-        let height = 30.0;
-        let self_size = Size::new(bc.max().width, height);
+        let self_size =
+            Size::new(bc.max().width, data.config.ui.header_height() as f64);
         self.update_icons(self_size, data);
         self_size
     }
 
     fn paint(&mut self, ctx: &mut PaintCtx, data: &LapceTabData, _env: &Env) {
-        let shadow_width = 5.0;
         let rect = ctx.size().to_rect();
         let position = data.panel_position(self.kind);
         ctx.with_save(|ctx| {
-            if data.config.ui.drop_shadow() {
+            let shadow_width = data.config.ui.drop_shadow_width() as f64;
+            if shadow_width > 0.0 {
+                ctx.clip(rect.inset((0.0, 0.0, 0.0, 50.0)));
                 ctx.blurred_rect(
                     rect,
                     shadow_width,
@@ -558,6 +559,14 @@ impl Widget<LapceTabData> for PanelMainHeader {
                         .get_color_unchecked(LapceTheme::LAPCE_DROPDOWN_SHADOW),
                 );
             } else if let Some(position) = position {
+                ctx.stroke(
+                    Line::new(
+                        Point::new(rect.x0, rect.y1 + 0.5),
+                        Point::new(rect.x1, rect.y1 + 0.5),
+                    ),
+                    data.config.get_color_unchecked(LapceTheme::LAPCE_BORDER),
+                    1.0,
+                );
                 match position {
                     PanelPosition::BottomLeft | PanelPosition::BottomRight => {
                         ctx.stroke(

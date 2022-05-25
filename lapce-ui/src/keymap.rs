@@ -40,10 +40,14 @@ impl LapceKeymap {
         };
         let keymap = LapceScrollNew::new(keymap);
 
-        let input = LapceEditorView::new(data.settings.keymap_view_id, None)
-            .hide_header()
-            .hide_gutter()
-            .padding((15.0, 15.0));
+        let input = LapceEditorView::new(
+            data.settings.keymap_view_id,
+            WidgetId::next(),
+            None,
+        )
+        .hide_header()
+        .hide_gutter()
+        .padding((15.0, 15.0));
         let header = LapceKeymapHeader::new();
         let split = LapceSplitNew::new(data.settings.keymap_split_id)
             .horizontal()
@@ -441,8 +445,8 @@ impl Widget<LapceTabData> for LapceKeymap {
                     size.width / 2.0 - active_width / 2.0,
                     size.height / 2.0 - active_height / 2.0 + paint_rect.y0,
                 ));
-            let shadow_width = 5.0;
-            if data.config.ui.drop_shadow() {
+            let shadow_width = data.config.ui.drop_shadow_width() as f64;
+            if shadow_width > 0.0 {
                 ctx.blurred_rect(
                     active_rect,
                     shadow_width,

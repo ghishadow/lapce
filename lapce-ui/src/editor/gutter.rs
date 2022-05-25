@@ -1,11 +1,13 @@
 use crate::svg::get_svg;
 use druid::{
-    piet::{Text, TextLayout, TextLayoutBuilder},
-    BoxConstraints, Env, Event, EventCtx, LayoutCtx, LifeCycle, LifeCycleCtx,
-    PaintCtx, Point, Rect, RenderContext, Size, UpdateCtx, Widget, WidgetId,
+    piet::{PietText, Text, TextLayout, TextLayoutBuilder},
+    BoxConstraints, Command, Env, Event, EventCtx, LayoutCtx, LifeCycle,
+    LifeCycleCtx, PaintCtx, Point, Rect, RenderContext, Size, Target, UpdateCtx,
+    Widget, WidgetId,
 };
 use lapce_core::buffer::DiffLines;
 use lapce_data::{
+    command::{LapceUICommand, LAPCE_UI_COMMAND},
     config::LapceTheme,
     data::{EditorView, LapceTabData},
     editor::{LapceEditorBufferData, Syntax},
@@ -14,6 +16,7 @@ use lapce_data::{
 pub struct LapceEditorGutter {
     view_id: WidgetId,
     width: f64,
+    mouse_down_pos: Point,
 }
 
 impl LapceEditorGutter {
@@ -21,6 +24,7 @@ impl LapceEditorGutter {
         Self {
             view_id,
             width: 0.0,
+            mouse_down_pos: Point::ZERO,
         }
     }
 }
@@ -28,11 +32,44 @@ impl LapceEditorGutter {
 impl Widget<LapceTabData> for LapceEditorGutter {
     fn event(
         &mut self,
-        _ctx: &mut EventCtx,
-        _event: &Event,
-        _data: &mut LapceTabData,
+        ctx: &mut EventCtx,
+        event: &Event,
+        data: &mut LapceTabData,
         _env: &Env,
     ) {
+        match event {
+            Event::MouseDown(mouse_event) => {
+                self.mouse_down_pos = mouse_event.pos;
+            }
+            Event::MouseUp(mouse_event) => {
+                let data = data.editor_view_content(self.view_id);
+                if let Some(actions) = data.current_code_actions() {
+                    if !actions.is_empty() {
+                        let rect = self.code_actions_rect(ctx.text(), &data);
+                        if rect.contains(self.mouse_down_pos)
+                            && rect.contains(mouse_event.pos)
+                        {
+                            let line_height = data.config.editor.line_height as f64;
+                            let offset = data.editor.new_cursor.offset();
+                            let (line, _) =
+                                data.doc.buffer().offset_to_line_col(offset);
+                            ctx.submit_command(Command::new(
+                                LAPCE_UI_COMMAND,
+                                LapceUICommand::ShowCodeActions(Some(
+                                    ctx.to_window(Point::new(
+                                        rect.x0,
+                                        (line + 1) as f64 * line_height
+                                            - data.editor.scroll_offset.y,
+                                    )),
+                                )),
+                                Target::Widget(data.editor.editor_id),
+                            ))
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
     }
 
     fn lifecycle(
@@ -436,6 +473,26 @@ impl LapceEditorGutter {
         }
     }
 
+    fn code_actions_rect(
+        &self,
+        text: &mut PietText,
+        data: &LapceEditorBufferData,
+    ) -> Rect {
+        let line_height = data.config.editor.line_height as f64;
+        let offset = data.editor.new_cursor.offset();
+        let (line, _) = data.doc.buffer().offset_to_line_col(offset);
+
+        let width = 16.0;
+        let height = 16.0;
+        let char_width = data.config.editor_char_width(text);
+        let rect = Size::new(width, height).to_rect().with_origin(Point::new(
+            self.width + char_width + 3.0,
+            (line_height - height) / 2.0 + line_height * line as f64
+                - data.editor.scroll_offset.y,
+        ));
+        rect
+    }
+
     fn paint_code_actions_hint(
         &self,
         data: &LapceEditorBufferData,
@@ -443,19 +500,8 @@ impl LapceEditorGutter {
     ) {
         if let Some(actions) = data.current_code_actions() {
             if !actions.is_empty() {
-                let line_height = data.config.editor.line_height as f64;
-                let offset = data.editor.new_cursor.offset();
-                let (line, _) = data.doc.buffer().offset_to_line_col(offset);
                 let svg = get_svg("lightbulb.svg").unwrap();
-                let width = 16.0;
-                let height = 16.0;
-                let char_width = data.config.editor_char_width(ctx.text());
-                let rect =
-                    Size::new(width, height).to_rect().with_origin(Point::new(
-                        self.width + char_width + 3.0,
-                        (line_height - height) / 2.0 + line_height * line as f64
-                            - data.editor.scroll_offset.y,
-                    ));
+                let rect = self.code_actions_rect(ctx.text(), data);
                 ctx.draw_svg(
                     &svg,
                     rect,

@@ -17,7 +17,7 @@ use lapce_core::{
     movement::Movement,
 };
 use lapce_data::command::CommandKind;
-use lapce_data::data::EditorView;
+use lapce_data::data::{EditorView, LapceData};
 use lapce_data::document::{BufferContent, LocalBufferKind};
 use lapce_data::keypress::KeyPressFocus;
 use lapce_data::{
@@ -30,7 +30,7 @@ use lapce_data::{
     menu::MenuItem,
     panel::PanelPosition,
 };
-use lsp_types::DiagnosticSeverity;
+use lsp_types::{CodeActionOrCommand, DiagnosticSeverity};
 
 pub mod container;
 pub mod gutter;
@@ -42,6 +42,7 @@ pub mod view;
 
 pub struct LapceEditor {
     view_id: WidgetId,
+    editor_id: WidgetId,
     placeholder: Option<String>,
 
     mouse_pos: Point,
@@ -52,9 +53,10 @@ pub struct LapceEditor {
 }
 
 impl LapceEditor {
-    pub fn new(view_id: WidgetId) -> Self {
+    pub fn new(view_id: WidgetId, editor_id: WidgetId) -> Self {
         Self {
             view_id,
+            editor_id,
             placeholder: None,
             mouse_pos: Point::ZERO,
             mouse_hover_timer: TimerToken::INVALID,
@@ -129,7 +131,7 @@ impl LapceEditor {
                 Target::Widget(editor_data.view_id),
             ));
 
-            self.drag_timer = ctx.request_timer(Duration::from_millis(16));
+            self.drag_timer = ctx.request_timer(Duration::from_millis(16), None);
             return true;
         }
 
@@ -178,8 +180,10 @@ impl LapceEditor {
             && is_inside
             && within_scroll
         {
-            self.mouse_hover_timer =
-                ctx.request_timer(Duration::from_millis(config.editor.hover_delay));
+            self.mouse_hover_timer = ctx.request_timer(
+                Duration::from_millis(config.editor.hover_delay),
+                None,
+            );
         }
     }
 
@@ -194,6 +198,7 @@ impl LapceEditor {
         match mouse_event.button {
             MouseButton::Left => {
                 self.left_click(ctx, mouse_event, editor_data, config);
+                editor_data.get_code_actions(ctx);
                 editor_data.cancel_completion();
                 // TODO: Don't cancel over here, because it would good to allow the user to
                 // select text inside the hover data
@@ -202,6 +207,7 @@ impl LapceEditor {
             MouseButton::Right => {
                 self.mouse_hover_timer = TimerToken::INVALID;
                 self.right_click(ctx, editor_data, mouse_event, config);
+                editor_data.get_code_actions(ctx);
                 editor_data.cancel_completion();
                 editor_data.cancel_hover();
             }
@@ -279,7 +285,7 @@ impl LapceEditor {
         let width = data.config.editor_char_width(text);
         match &data.editor.content {
             BufferContent::File(_)
-            | BufferContent::Scratch(_)
+            | BufferContent::Scratch(..)
             | BufferContent::Local(LocalBufferKind::Empty) => {
                 if data.editor.code_lens {
                     if let Some(syntax) = data.doc.syntax() {
@@ -1686,6 +1692,10 @@ impl LapceEditor {
 }
 
 impl Widget<LapceTabData> for LapceEditor {
+    fn id(&self) -> Option<WidgetId> {
+        Some(self.editor_id)
+    }
+
     fn event(
         &mut self,
         ctx: &mut EventCtx,
@@ -1749,6 +1759,57 @@ impl Widget<LapceTabData> for LapceEditor {
                     data.update_from_editor_buffer_data(editor_data, &editor, &doc);
                 }
             }
+            Event::Command(cmd) if cmd.is(LAPCE_UI_COMMAND) => {
+                let cmd = cmd.get_unchecked(LAPCE_UI_COMMAND);
+                if let LapceUICommand::ShowCodeActions(point) = cmd {
+                    let editor_data = data.editor_view_content(self.view_id);
+                    if let Some(actions) = editor_data.current_code_actions() {
+                        if !actions.is_empty() {
+                            let mut menu = druid::Menu::new("");
+
+                            for action in actions.iter() {
+                                let title = match action {
+                                    CodeActionOrCommand::Command(c) => {
+                                        c.title.clone()
+                                    }
+                                    CodeActionOrCommand::CodeAction(a) => {
+                                        a.title.clone()
+                                    }
+                                };
+                                let mut item = druid::MenuItem::new(title);
+                                item = item.command(Command::new(
+                                    LAPCE_UI_COMMAND,
+                                    LapceUICommand::RunCodeAction(action.clone()),
+                                    Target::Widget(editor_data.view_id),
+                                ));
+                                menu = menu.entry(item);
+                            }
+
+                            let point = point.unwrap_or_else(|| {
+                                let offset = editor_data.editor.new_cursor.offset();
+                                let (line, col) = editor_data
+                                    .doc
+                                    .buffer()
+                                    .offset_to_line_col(offset);
+                                let x = editor_data
+                                    .doc
+                                    .point_of_line_col(
+                                        ctx.text(),
+                                        line,
+                                        col,
+                                        editor_data.config.editor.font_size,
+                                        &editor_data.config,
+                                    )
+                                    .x;
+                                let y = editor_data.config.editor.line_height as f64
+                                    * (line + 1) as f64;
+                                ctx.to_window(Point::new(x, y))
+                            });
+                            ctx.show_context_menu::<LapceData>(menu, point);
+                        }
+                    }
+                }
+            }
             _ => (),
         }
     }
@@ -1793,6 +1854,16 @@ impl Widget<LapceTabData> for LapceEditor {
     fn paint(&mut self, ctx: &mut PaintCtx, data: &LapceTabData, env: &Env) {
         let is_focused = data.focus == self.view_id;
         let data = data.editor_view_content(self.view_id);
+        let is_focused = is_focused
+            && (data
+                .editor
+                .last_cursor_instant
+                .borrow()
+                .elapsed()
+                .as_millis()
+                / 500)
+                % 2
+                == 0;
         self.paint_content(&data, ctx, is_focused, env);
     }
 }

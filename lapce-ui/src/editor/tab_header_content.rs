@@ -16,6 +16,7 @@ use lapce_data::{
     data::{DragContent, EditorTabChild, LapceTabData},
     document::BufferContent,
     editor::TabRect,
+    proxy::VERSION,
 };
 
 use crate::{
@@ -93,7 +94,10 @@ impl LapceEditorTabHeaderContent {
                     .unwrap();
                 let editor_tab = Arc::make_mut(editor_tab);
 
-                if editor_tab.active != tab_idx {
+                if *data.main_split.active_tab != Some(self.widget_id)
+                    || editor_tab.active != tab_idx
+                {
+                    data.main_split.active_tab = Arc::new(Some(self.widget_id));
                     editor_tab.active = tab_idx;
                     ctx.submit_command(Command::new(
                         LAPCE_UI_COMMAND,
@@ -218,6 +222,7 @@ impl LapceEditorTabHeaderContent {
                 return;
             }
 
+            let mut child = child.clone();
             child.set_editor_tab(data, editor_tab.widget_id);
             let editor_tab = data
                 .main_split
@@ -350,7 +355,7 @@ impl Widget<LapceTabData> for LapceEditorTabHeaderContent {
             let mut text = "".to_string();
             let mut svg = get_svg("default_file.svg").unwrap();
             match child {
-                EditorTabChild::Editor(view_id, _) => {
+                EditorTabChild::Editor(view_id, _, _) => {
                     let editor = data.main_split.editors.get(view_id).unwrap();
                     if let BufferContent::File(path) = &editor.content {
                         svg = file_svg_new(path);
@@ -359,18 +364,19 @@ impl Widget<LapceTabData> for LapceEditorTabHeaderContent {
                                 text = s.to_string();
                             }
                         }
-                    } else if let BufferContent::Scratch(_) = &editor.content {
+                    } else if let BufferContent::Scratch(..) = &editor.content {
                         text = editor.content.file_name().to_string();
                     }
                 }
+                EditorTabChild::Settings(_, _) => {
+                    text = format!("Settings v{}", VERSION);
+                }
             }
+            let font_size = data.config.ui.font_size() as f64;
             let text_layout = ctx
                 .text()
                 .new_text_layout(text)
-                .font(
-                    data.config.ui.font_family(),
-                    data.config.ui.font_size() as f64,
-                )
+                .font(data.config.ui.font_family(), font_size)
                 .text_color(
                     data.config
                         .get_color_unchecked(LapceTheme::EDITOR_FOREGROUND)
@@ -379,7 +385,9 @@ impl Widget<LapceTabData> for LapceEditorTabHeaderContent {
                 .build()
                 .unwrap();
             let text_size = text_layout.size();
-            let width = (text_size.width + height * 2.0).max(100.0);
+            let width =
+                (text_size.width + height + (height - font_size) / 2.0 + font_size)
+                    .max(data.config.ui.tab_min_width() as f64);
             let close_size = 24.0;
             let inflate = (height - close_size) / 2.0;
             let tab_rect = TabRect {

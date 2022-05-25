@@ -158,10 +158,29 @@ pub struct UIConfig {
         desc = "Set the ui font family. If empty, it uses system default."
     )]
     font_family: String,
+
     #[field_names(desc = "Set the ui base font size")]
     font_size: usize,
-    #[field_names(desc = "Controls if the UI uses drop shadow")]
-    drop_shadow: bool,
+
+    #[field_names(
+        desc = "Set the header height for panel header and editor tab header"
+    )]
+    header_height: usize,
+
+    #[field_names(desc = "Set the height for status line")]
+    status_height: usize,
+
+    #[field_names(desc = "Set the minium width for editor tab")]
+    tab_min_width: usize,
+
+    #[field_names(desc = "Set the width for activity bar")]
+    activity_width: usize,
+
+    #[field_names(desc = "Set the width for scroll bar")]
+    scroll_width: usize,
+
+    #[field_names(desc = "Controls the width of drop shadow in the UI")]
+    drop_shadow_width: usize,
 }
 
 impl UIConfig {
@@ -177,8 +196,30 @@ impl UIConfig {
         self.font_size.max(6).min(32)
     }
 
-    pub fn drop_shadow(&self) -> bool {
-        self.drop_shadow
+    pub fn header_height(&self) -> usize {
+        let font_size = self.font_size();
+        self.header_height.max(font_size)
+    }
+
+    pub fn status_height(&self) -> usize {
+        let font_size = self.font_size();
+        self.status_height.max(font_size)
+    }
+
+    pub fn tab_min_width(&self) -> usize {
+        self.tab_min_width
+    }
+
+    pub fn activity_width(&self) -> usize {
+        self.activity_width
+    }
+
+    pub fn scroll_width(&self) -> usize {
+        self.scroll_width
+    }
+
+    pub fn drop_shadow_width(&self) -> usize {
+        self.drop_shadow_width
     }
 }
 

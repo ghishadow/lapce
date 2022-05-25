@@ -6,7 +6,12 @@ icon-theme = ""
 [ui]
 font-family = ""
 font-size = 13
-drop-shadow = true
+header-height = 35
+status-height = 25
+tab-min-width = 100
+activity-width = 50
+scroll-width = 10
+drop-shadow-width = 0
 
 [editor]
 font-family = "Cascadia Code"

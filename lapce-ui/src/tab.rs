@@ -1,6 +1,7 @@
 use std::{collections::HashMap, path::PathBuf, sync::Arc};
 
 use druid::{
+    kurbo::Line,
     piet::{PietTextLayout, Text, TextLayout, TextLayoutBuilder},
     BoxConstraints, Command, Data, Env, Event, EventCtx, InternalLifeCycle,
     LayoutCtx, LifeCycle, LifeCycleCtx, PaintCtx, Point, Rect, RenderContext, Size,
@@ -36,13 +37,12 @@ use serde::Deserialize;
 use xi_rope::Rope;
 
 use crate::{
-    activity::ActivityBar, alert::AlertBox, code_action::CodeAction,
-    completion::CompletionContainer, explorer::FileExplorer, hover::HoverContainer,
-    palette::NewPalette, picker::FilePicker, plugin::Plugin,
-    problem::new_problem_panel, search::new_search_panel,
-    settings::LapceSettingsPanel, source_control::new_source_control_panel,
-    split::split_data_widget, status::LapceStatusNew, svg::get_svg,
-    terminal::TerminalPanel,
+    activity::ActivityBar, alert::AlertBox, completion::CompletionContainer,
+    explorer::FileExplorer, hover::HoverContainer, palette::NewPalette,
+    picker::FilePicker, plugin::Plugin, problem::new_problem_panel,
+    search::new_search_panel, settings::LapceSettingsPanel,
+    source_control::new_source_control_panel, split::split_data_widget,
+    status::LapceStatusNew, svg::get_svg, terminal::TerminalPanel,
 };
 
 pub struct LapceIcon {
@@ -64,7 +64,6 @@ pub struct LapceTabNew {
     completion: WidgetPod<LapceTabData, Box<dyn Widget<LapceTabData>>>,
     hover: WidgetPod<LapceTabData, Box<dyn Widget<LapceTabData>>>,
     palette: WidgetPod<LapceTabData, Box<dyn Widget<LapceTabData>>>,
-    code_action: WidgetPod<LapceTabData, Box<dyn Widget<LapceTabData>>>,
     status: WidgetPod<LapceTabData, Box<dyn Widget<LapceTabData>>>,
     picker: WidgetPod<LapceTabData, Box<dyn Widget<LapceTabData>>>,
     settings: WidgetPod<LapceTabData, Box<dyn Widget<LapceTabData>>>,
@@ -92,7 +91,6 @@ impl LapceTabNew {
         let hover = HoverContainer::new(&data.hover);
         let palette = NewPalette::new(data);
         let status = LapceStatusNew::new();
-        let code_action = CodeAction::new();
 
         let mut panels = HashMap::new();
         let file_explorer = FileExplorer::new_panel(data);
@@ -121,7 +119,8 @@ impl LapceTabNew {
 
         let picker = FilePicker::new(data);
 
-        let settings = LapceSettingsPanel::new(data);
+        let settings =
+            LapceSettingsPanel::new(data, WidgetId::next(), WidgetId::next());
 
         let alert = AlertBox::new(data);
 
@@ -131,7 +130,6 @@ impl LapceTabNew {
             main_split: WidgetPod::new(main_split.boxed()),
             completion: WidgetPod::new(completion.boxed()),
             hover: WidgetPod::new(hover.boxed()),
-            code_action: WidgetPod::new(code_action.boxed()),
             picker: WidgetPod::new(picker.boxed()),
             palette: WidgetPod::new(palette.boxed()),
             status: WidgetPod::new(status.boxed()),
@@ -215,8 +213,8 @@ impl LapceTabNew {
                 DragContent::EditorTab(_, _, _, tab_rect) => {
                     let rect = tab_rect.rect.with_origin(self.mouse_pos - *offset);
                     let size = rect.size();
-                    let shadow_width = 5.0;
-                    if data.config.ui.drop_shadow() {
+                    let shadow_width = data.config.ui.drop_shadow_width() as f64;
+                    if shadow_width > 0.0 {
                         ctx.blurred_rect(
                             rect,
                             shadow_width,
@@ -224,14 +222,20 @@ impl LapceTabNew {
                                 LapceTheme::LAPCE_DROPDOWN_SHADOW,
                             ),
                         );
+                    } else {
+                        ctx.stroke(
+                            rect.inflate(0.5, 0.5),
+                            data.config
+                                .get_color_unchecked(LapceTheme::LAPCE_BORDER),
+                            1.0,
+                        );
                     }
                     ctx.fill(
                         rect,
                         &data
                             .config
                             .get_color_unchecked(LapceTheme::EDITOR_BACKGROUND)
-                            .clone()
-                            .with_alpha(0.6),
+                            .clone(),
                     );
 
                     let width = 13.0;
@@ -983,10 +987,6 @@ impl LapceTabNew {
 
                         ctx.set_handled();
                     }
-                    LapceUICommand::ShowCodeActions
-                    | LapceUICommand::CancelCodeActions => {
-                        self.code_action.event(ctx, event, data, env);
-                    }
                     LapceUICommand::Focus => {
                         let dir = data
                             .workspace
@@ -1035,7 +1035,7 @@ impl LapceTabNew {
                         ctx.set_handled();
                     }
                     LapceUICommand::FocusEditor => {
-                        if let Some(active) = *data.main_split.active {
+                        if let Some(active) = *data.main_split.active_tab {
                             ctx.submit_command(Command::new(
                                 LAPCE_UI_COMMAND,
                                 LapceUICommand::Focus,
@@ -1127,9 +1127,6 @@ impl Widget<LapceTabData> for LapceTabNew {
         if data.alert.active || event.should_propagate_to_hidden() {
             self.alert.event(ctx, event, data, env);
         }
-        if data.settings.shown || event.should_propagate_to_hidden() {
-            self.settings.event(ctx, event, data, env);
-        }
         if data.picker.active || event.should_propagate_to_hidden() {
             self.picker.event(ctx, event, data, env);
         }
@@ -1148,7 +1145,6 @@ impl Widget<LapceTabData> for LapceTabNew {
         {
             self.hover.event(ctx, event, data, env);
         }
-        self.code_action.event(ctx, event, data, env);
 
         if !event.should_propagate_to_hidden() && !ctx.is_handled() {
             self.handle_event(ctx, event, data, env);
@@ -1205,7 +1201,6 @@ impl Widget<LapceTabData> for LapceTabNew {
         self.palette.lifecycle(ctx, event, data, env);
         self.activity.lifecycle(ctx, event, data, env);
         self.main_split.lifecycle(ctx, event, data, env);
-        self.code_action.lifecycle(ctx, event, data, env);
         self.status.lifecycle(ctx, event, data, env);
         self.completion.lifecycle(ctx, event, data, env);
         self.hover.lifecycle(ctx, event, data, env);
@@ -1257,10 +1252,6 @@ impl Widget<LapceTabData> for LapceTabNew {
             ctx.request_layout();
         }
 
-        if old_data.settings.shown != data.settings.shown {
-            ctx.request_layout();
-        }
-
         if old_data.picker.active != data.picker.active {
             ctx.request_layout();
         }
@@ -1270,7 +1261,6 @@ impl Widget<LapceTabData> for LapceTabNew {
         self.main_split.update(ctx, data, env);
         self.completion.update(ctx, data, env);
         self.hover.update(ctx, data, env);
-        self.code_action.update(ctx, data, env);
         self.status.update(ctx, data, env);
         self.picker.update(ctx, data, env);
         self.settings.update(ctx, data, env);
@@ -1543,14 +1533,6 @@ impl Widget<LapceTabData> for LapceTabNew {
             self.hover.set_origin(ctx, data, env, hover_origin);
         }
 
-        if data.main_split.show_code_actions {
-            let code_action_origin =
-                data.code_action_origin(ctx.text(), self_size, &data.config);
-            self.code_action.layout(ctx, bc, data, env);
-            self.code_action
-                .set_origin(ctx, data, env, code_action_origin);
-        }
-
         if data.palette.status != PaletteStatus::Inactive {
             let palette_size = self.palette.layout(ctx, bc, data, env);
             self.palette.set_origin(
@@ -1572,11 +1554,6 @@ impl Widget<LapceTabData> for LapceTabNew {
                     (self_size.height - picker_size.height) / 3.0,
                 ),
             );
-        }
-
-        if data.settings.shown {
-            self.settings.layout(ctx, bc, data, env);
-            self.settings.set_origin(ctx, data, env, Point::ZERO);
         }
 
         if data.alert.active {
@@ -1613,13 +1590,24 @@ impl Widget<LapceTabData> for LapceTabNew {
                                 .get_color_unchecked(LapceTheme::EDITOR_BACKGROUND),
                         };
                         let rect = panel.layout_rect();
-                        if data.config.ui.drop_shadow() {
+                        let shadow_width = data.config.ui.drop_shadow_width() as f64;
+                        if shadow_width > 0.0 {
                             ctx.blurred_rect(
                                 rect,
-                                5.0,
+                                shadow_width,
                                 data.config.get_color_unchecked(
                                     LapceTheme::LAPCE_DROPDOWN_SHADOW,
                                 ),
+                            );
+                        } else {
+                            ctx.stroke(
+                                Line::new(
+                                    Point::new(rect.x1 + 0.5, rect.y0),
+                                    Point::new(rect.x1 + 0.5, rect.y1),
+                                ),
+                                data.config
+                                    .get_color_unchecked(LapceTheme::LAPCE_BORDER),
+                                1.0,
                             );
                         }
                         ctx.fill(rect, bg);
@@ -1654,7 +1642,6 @@ impl Widget<LapceTabData> for LapceTabNew {
         self.status.paint(ctx, data, env);
         self.completion.paint(ctx, data, env);
         self.hover.paint(ctx, data, env);
-        self.code_action.paint(ctx, data, env);
         self.palette.paint(ctx, data, env);
         self.picker.paint(ctx, data, env);
         self.settings.paint(ctx, data, env);

@@ -20,13 +20,13 @@ use uuid::Uuid;
 use crate::command::CommandKind;
 use crate::data::{LapceWorkspace, LapceWorkspaceType};
 use crate::document::BufferContent;
+use crate::editor::EditorLocationNew;
 use crate::{
     command::LAPCE_UI_COMMAND,
     command::{CommandExecuted, LAPCE_COMMAND},
     command::{LapceCommand, LapceUICommand},
     config::Config,
     data::{FocusArea, LapceMainSplitData, LapceTabData, PanelKind},
-    editor::EditorLocationNew,
     find::Find,
     keypress::{KeyPressData, KeyPressFocus},
     proxy::LapceProxy,
@@ -447,7 +447,7 @@ impl PaletteViewData {
         palette.palette_type = PaletteType::File;
         palette.items.clear();
         palette.filtered_items.clear();
-        if let Some(active) = *self.main_split.active {
+        if let Some(active) = *self.main_split.active_tab {
             ctx.submit_command(Command::new(
                 LAPCE_UI_COMMAND,
                 LapceUICommand::Focus,

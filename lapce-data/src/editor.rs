@@ -40,7 +40,14 @@ use lapce_core::command::{
 };
 use lapce_core::mode::{Mode, MotionMode};
 pub use lapce_core::syntax::Syntax;
+use lsp_types::CodeActionOrCommand;
 use lsp_types::CompletionTextEdit;
+use lsp_types::DocumentChangeOperation;
+use lsp_types::DocumentChanges;
+use lsp_types::OneOf;
+use lsp_types::TextEdit;
+use lsp_types::Url;
+use lsp_types::WorkspaceEdit;
 use lsp_types::{
     CodeActionResponse, CompletionItem, DiagnosticSeverity, GotoDefinitionResponse,
     Location, Position,
@@ -214,6 +221,53 @@ impl LapceEditorBufferData {
 
     fn has_hover(&self) -> bool {
         self.hover.status != HoverStatus::Inactive && !self.hover.is_empty()
+    }
+
+    pub fn run_code_action(&mut self, action: &CodeActionOrCommand) {
+        if let BufferContent::File(path) = &self.editor.content {
+            match action {
+                CodeActionOrCommand::Command(_cmd) => {}
+                CodeActionOrCommand::CodeAction(action) => {
+                    if let Some(edit) = action.edit.as_ref() {
+                        if let Some(edits) = workspce_edits(edit) {
+                            if let Some(edits) =
+                                edits.get(&Url::from_file_path(&path).unwrap())
+                            {
+                                let path = path.clone();
+                                let doc = self
+                                    .main_split
+                                    .open_docs
+                                    .get_mut(&path)
+                                    .unwrap();
+                                let edits: Vec<(
+                                    lapce_core::selection::Selection,
+                                    &str,
+                                )> = edits
+                                    .iter()
+                                    .map(|edit| {
+                                        let selection =
+                                            lapce_core::selection::Selection::region(
+                                                doc.buffer().offset_of_position(
+                                                    &edit.range.start,
+                                                ),
+                                                doc.buffer().offset_of_position(
+                                                    &edit.range.end,
+                                                ),
+                                            );
+                                        (selection, edit.new_text.as_str())
+                                    })
+                                    .collect();
+                                self.main_split.edit(
+                                    &path,
+                                    &edits,
+                                    lapce_core::editor::EditType::Other,
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 
     pub fn apply_completion_item(&mut self, item: &CompletionItem) -> Result<()> {
@@ -505,6 +559,9 @@ impl LapceEditorBufferData {
             return;
         }
 
+        // Get the diagnostics for when we make the request
+        let diagnostics = self.diagnostics().map(Arc::clone);
+
         let mut hover = Arc::make_mut(&mut self.hover);
 
         if hover.status != HoverStatus::Inactive
@@ -527,6 +584,7 @@ impl LapceEditorBufferData {
             self.proxy.clone(),
             hover.request_id,
             self.doc.clone(),
+            diagnostics,
             self.doc.buffer().offset_to_position(start_offset),
             hover.id,
             event_sink,
@@ -1117,7 +1175,7 @@ impl LapceEditorBufferData {
                     Target::Auto,
                 );
             });
-        } else if let BufferContent::Scratch(_) = self.doc.content() {
+        } else if let BufferContent::Scratch(..) = self.doc.content() {
             let content = self.doc.content().clone();
             let view_id = self.editor.view_id;
             self.main_split.current_save_as =
@@ -1219,6 +1277,12 @@ impl LapceEditorBufferData {
                         },
                         Target::Widget(self.palette.widget_id),
                     ));
+                }
+                if self.has_completions() {
+                    self.cancel_completion();
+                }
+                if self.has_hover() {
+                    self.cancel_hover();
                 }
             }
             SplitVertical => {
@@ -1616,15 +1680,11 @@ impl LapceEditorBufferData {
                 ));
             }
             ShowCodeActions => {
-                if let Some(actions) = self.current_code_actions() {
-                    if !actions.is_empty() {
-                        ctx.submit_command(Command::new(
-                            LAPCE_UI_COMMAND,
-                            LapceUICommand::ShowCodeActions,
-                            Target::Auto,
-                        ));
-                    }
-                }
+                ctx.submit_command(Command::new(
+                    LAPCE_UI_COMMAND,
+                    LapceUICommand::ShowCodeActions(None),
+                    Target::Widget(self.editor.editor_id),
+                ));
             }
             GotoDefinition => {
                 let offset = self.editor.new_cursor.offset();
@@ -1786,7 +1846,7 @@ impl LapceEditorBufferData {
                         Target::Widget(*self.main_split.tab_id),
                     ));
                 }
-                if let Some(find_view_id) = self.editor.find_view_id {
+                if let Some((find_view_id, _)) = self.editor.find_view_id {
                     ctx.submit_command(Command::new(
                         LAPCE_COMMAND,
                         LapceCommand {
@@ -1885,7 +1945,7 @@ impl KeyPressFocus for LapceEditorBufferData {
             "input_focus" => self.editor.content.is_input(),
             "editor_focus" => match self.editor.content {
                 BufferContent::File(_) => true,
-                BufferContent::Scratch(_) => true,
+                BufferContent::Scratch(..) => true,
                 BufferContent::Local(_) => false,
                 BufferContent::Value(_) => false,
             },
@@ -2055,4 +2115,46 @@ fn process_get_references(
         Target::Auto,
     );
     Ok(())
+}
+
+fn workspce_edits(edit: &WorkspaceEdit) -> Option<HashMap<Url, Vec<TextEdit>>> {
+    if let Some(changes) = edit.changes.as_ref() {
+        return Some(changes.clone());
+    }
+
+    let changes = edit.document_changes.as_ref()?;
+    let edits = match changes {
+        DocumentChanges::Edits(edits) => edits
+            .iter()
+            .map(|e| {
+                (
+                    e.text_document.uri.clone(),
+                    e.edits
+                        .iter()
+                        .map(|e| match e {
+                            OneOf::Left(e) => e.clone(),
+                            OneOf::Right(e) => e.text_edit.clone(),
+                        })
+                        .collect(),
+                )
+            })
+            .collect::<HashMap<Url, Vec<TextEdit>>>(),
+        DocumentChanges::Operations(ops) => ops
+            .iter()
+            .filter_map(|o| match o {
+                DocumentChangeOperation::Op(_op) => None,
+                DocumentChangeOperation::Edit(e) => Some((
+                    e.text_document.uri.clone(),
+                    e.edits
+                        .iter()
+                        .map(|e| match e {
+                            OneOf::Left(e) => e.clone(),
+                            OneOf::Right(e) => e.text_edit.clone(),
+                        })
+                        .collect(),
+                )),
+            })
+            .collect::<HashMap<Url, Vec<TextEdit>>>(),
+    };
+    Some(edits)
 }

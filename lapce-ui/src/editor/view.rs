@@ -1,15 +1,21 @@
-use std::{iter::Iterator, ops::Sub, sync::Arc};
+use std::{
+    iter::Iterator,
+    ops::Sub,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 use druid::{
     piet::PietText, BoxConstraints, Command, Data, Env, Event, EventCtx, LayoutCtx,
     LifeCycle, LifeCycleCtx, Modifiers, PaintCtx, Point, Rect, RenderContext,
-    SingleUse, Size, Target, Vec2, Widget, WidgetExt, WidgetId, WidgetPod,
+    SingleUse, Size, Target, TimerToken, Vec2, Widget, WidgetExt, WidgetId,
+    WidgetPod,
 };
 use lapce_core::command::{EditCommand, FocusCommand};
 use lapce_data::{
     command::{
-        CommandKind, EnsureVisiblePosition, LapceCommand, LapceUICommand,
-        LAPCE_COMMAND, LAPCE_UI_COMMAND,
+        CommandExecuted, CommandKind, EnsureVisiblePosition, LapceCommand,
+        LapceUICommand, LAPCE_COMMAND, LAPCE_UI_COMMAND,
     },
     config::{EditorConfig, LapceTheme},
     data::{
@@ -26,6 +32,7 @@ use crate::{
         container::LapceEditorContainer, header::LapceEditorHeader, LapceEditor,
     },
     find::FindBox,
+    settings::LapceSettingsPanel,
 };
 
 pub struct LapceEditorView {
@@ -33,14 +40,19 @@ pub struct LapceEditorView {
     pub header: WidgetPod<LapceTabData, LapceEditorHeader>,
     pub editor: WidgetPod<LapceTabData, LapceEditorContainer>,
     pub find: Option<WidgetPod<LapceTabData, Box<dyn Widget<LapceTabData>>>>,
+    cursor_blink_timer: TimerToken,
 }
 
 pub fn editor_tab_child_widget(
     child: &EditorTabChild,
+    data: &LapceTabData,
 ) -> Box<dyn Widget<LapceTabData>> {
     match child {
-        EditorTabChild::Editor(view_id, find_view_id) => {
-            LapceEditorView::new(*view_id, *find_view_id).boxed()
+        EditorTabChild::Editor(view_id, editor_id, find_view_id) => {
+            LapceEditorView::new(*view_id, *editor_id, *find_view_id).boxed()
+        }
+        EditorTabChild::Settings(widget_id, editor_tab_id) => {
+            LapceSettingsPanel::new(data, *widget_id, *editor_tab_id).boxed()
         }
     }
 }
@@ -48,17 +60,21 @@ pub fn editor_tab_child_widget(
 impl LapceEditorView {
     pub fn new(
         view_id: WidgetId,
-        find_view_id: Option<WidgetId>,
+        editor_id: WidgetId,
+        find_view_id: Option<(WidgetId, WidgetId)>,
     ) -> LapceEditorView {
         let header = LapceEditorHeader::new(view_id);
-        let editor = LapceEditorContainer::new(view_id);
-        let find =
-            find_view_id.map(|id| WidgetPod::new(FindBox::new(id, view_id)).boxed());
+        let editor = LapceEditorContainer::new(view_id, editor_id);
+        let find = find_view_id.map(|(find_view_id, find_editor_id)| {
+            WidgetPod::new(FindBox::new(find_view_id, find_editor_id, view_id))
+                .boxed()
+        });
         Self {
             view_id,
             header: WidgetPod::new(header),
             editor: WidgetPod::new(editor),
             find,
+            cursor_blink_timer: TimerToken::INVALID,
         }
     }
 
@@ -112,7 +128,7 @@ impl LapceEditorView {
             ));
         }
         match &editor.content {
-            BufferContent::File(_) | BufferContent::Scratch(_) => {
+            BufferContent::File(_) | BufferContent::Scratch(..) => {
                 data.focus_area = FocusArea::Editor;
                 data.main_split.active = Arc::new(Some(self.view_id));
                 data.main_split.active_tab = Arc::new(editor.tab_id);
@@ -152,6 +168,9 @@ impl LapceEditorView {
         env: &Env,
     ) {
         match cmd {
+            LapceUICommand::RunCodeAction(action) => {
+                data.run_code_action(action);
+            }
             LapceUICommand::EnsureCursorVisible(position) => {
                 self.ensure_cursor_visible(
                     ctx,
@@ -520,6 +539,16 @@ impl Widget<LapceTabData> for LapceEditorView {
                     );
                 }
             }
+            Event::Timer(id) if self.cursor_blink_timer == *id => {
+                ctx.set_handled();
+                if data.focus == self.view_id {
+                    ctx.request_paint();
+                    self.cursor_blink_timer =
+                        ctx.request_timer(Duration::from_millis(500), None);
+                } else {
+                    self.cursor_blink_timer = TimerToken::INVALID;
+                }
+            }
             _ => (),
         }
 
@@ -555,7 +584,16 @@ impl Widget<LapceTabData> for LapceEditorView {
             }
             Event::Command(cmd) if cmd.is(LAPCE_COMMAND) => {
                 let command = cmd.get_unchecked(LAPCE_COMMAND);
-                editor_data.run_command(ctx, command, None, Modifiers::empty(), env);
+                if editor_data.run_command(
+                    ctx,
+                    command,
+                    None,
+                    Modifiers::empty(),
+                    env,
+                ) == CommandExecuted::Yes
+                {
+                    ctx.set_handled();
+                }
                 self.ensure_cursor_visible(
                     ctx,
                     &editor_data,
@@ -656,7 +694,34 @@ impl Widget<LapceTabData> for LapceEditorView {
             find.update(ctx, data, env);
         }
 
-        if old_data.config.lapce.modal != data.config.lapce.modal {
+        let old_editor_data = old_data.editor_view_content(self.view_id);
+        let editor_data = data.editor_view_content(self.view_id);
+
+        if data.focus == self.view_id {
+            let reset = if old_data.focus != self.view_id {
+                true
+            } else {
+                let offset = editor_data.editor.new_cursor.offset();
+                let old_offset = old_editor_data.editor.new_cursor.offset();
+                let (line, col) =
+                    editor_data.doc.buffer().offset_to_line_col(offset);
+                let (old_line, old_col) =
+                    old_editor_data.doc.buffer().offset_to_line_col(old_offset);
+                line != old_line || col != old_col
+            };
+
+            if reset {
+                self.cursor_blink_timer =
+                    ctx.request_timer(Duration::from_millis(500), None);
+                *editor_data.editor.last_cursor_instant.borrow_mut() =
+                    Instant::now();
+                ctx.request_paint();
+            }
+        }
+
+        if old_data.config.lapce.modal != data.config.lapce.modal
+            && !editor_data.doc.content().is_input()
+        {
             if !data.config.lapce.modal {
                 ctx.submit_command(Command::new(
                     LAPCE_COMMAND,
@@ -677,8 +742,6 @@ impl Widget<LapceTabData> for LapceEditorView {
                 ));
             }
         }
-        let old_editor_data = old_data.editor_view_content(self.view_id);
-        let editor_data = data.editor_view_content(self.view_id);
 
         if let Some(syntax) = editor_data.doc.syntax() {
             if syntax.line_height != data.config.editor.line_height

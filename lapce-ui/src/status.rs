@@ -1,4 +1,5 @@
 use druid::{
+    kurbo::Line,
     piet::{Text, TextLayout, TextLayoutBuilder},
     Command, Event, EventCtx, MouseEvent, PaintCtx, Point, RenderContext, Size,
     Target, Widget,
@@ -14,7 +15,6 @@ use lapce_data::{
 use crate::{svg::get_svg, tab::LapceIcon};
 
 pub struct LapceStatusNew {
-    height: f64,
     panel_icons: Vec<LapceIcon>,
     mouse_pos: Point,
     icon_size: f64,
@@ -23,7 +23,6 @@ pub struct LapceStatusNew {
 impl LapceStatusNew {
     pub fn new() -> Self {
         Self {
-            height: 25.0,
             panel_icons: Vec::new(),
             mouse_pos: Point::ZERO,
             icon_size: 13.0,
@@ -226,7 +225,8 @@ impl Widget<LapceTabData> for LapceStatusNew {
         data: &LapceTabData,
         _env: &druid::Env,
     ) -> Size {
-        let self_size = Size::new(bc.max().width, self.height);
+        let self_size =
+            Size::new(bc.max().width, data.config.ui.status_height() as f64);
         self.panel_icons = self.panel_icons(self_size, data);
         self_size
     }
@@ -234,12 +234,22 @@ impl Widget<LapceTabData> for LapceStatusNew {
     fn paint(&mut self, ctx: &mut PaintCtx, data: &LapceTabData, _env: &druid::Env) {
         let size = ctx.size();
         let rect = size.to_rect();
-        if data.config.ui.drop_shadow() {
+        let shadow_width = data.config.ui.drop_shadow_width() as f64;
+        if shadow_width > 0.0 {
             ctx.blurred_rect(
                 rect,
-                5.0,
+                shadow_width,
                 data.config
                     .get_color_unchecked(LapceTheme::LAPCE_DROPDOWN_SHADOW),
+            );
+        } else {
+            ctx.stroke(
+                Line::new(
+                    Point::new(rect.x0, rect.y0 - 0.5),
+                    Point::new(rect.x1, rect.y0 - 0.5),
+                ),
+                data.config.get_color_unchecked(LapceTheme::LAPCE_BORDER),
+                1.0,
             );
         }
         ctx.fill(

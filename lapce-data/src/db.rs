@@ -135,6 +135,7 @@ impl EditorTabInfo {
 #[derive(Clone, Serialize, Deserialize)]
 pub enum EditorTabChildInfo {
     Editor(EditorInfo),
+    Settings,
 }
 
 impl EditorTabChildInfo {
@@ -157,7 +158,14 @@ impl EditorTabChildInfo {
                     config,
                     event_sink,
                 );
-                EditorTabChild::Editor(editor_data.view_id, editor_data.find_view_id)
+                EditorTabChild::Editor(
+                    editor_data.view_id,
+                    editor_data.editor_id,
+                    editor_data.find_view_id,
+                )
+            }
+            EditorTabChildInfo::Settings => {
+                EditorTabChild::Settings(WidgetId::next(), editor_tab_id)
             }
         }
     }
@@ -256,6 +264,7 @@ impl EditorInfo {
     ) -> LapceEditorData {
         let editor_data = LapceEditorData::new(
             None,
+            None,
             Some(editor_tab_id),
             self.content.clone(),
             config,
@@ -287,7 +296,7 @@ impl EditorInfo {
                 ));
                 data.open_docs.insert(path.clone(), doc);
             }
-        } else if let BufferContent::Scratch(id) = &self.content {
+        } else if let BufferContent::Scratch(id, _) = &self.content {
             if !data.scratch_docs.contains_key(id) {
                 let mut doc = Document::new(
                     self.content.clone(),

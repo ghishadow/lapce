@@ -239,10 +239,11 @@ impl PaletteContainer {
             .editors
             .get(&data.palette.preview_editor)
             .unwrap();
-        let input = LapceEditorView::new(data.palette.input_editor, None)
-            .hide_header()
-            .hide_gutter()
-            .padding(10.0);
+        let input =
+            LapceEditorView::new(data.palette.input_editor, WidgetId::next(), None)
+                .hide_header()
+                .hide_gutter()
+                .padding(10.0);
         let content = LapceIdentityWrapper::wrap(
             LapceScrollNew::new(
                 NewPaletteContent::new().lens(PaletteViewLens).boxed(),
@@ -250,7 +251,8 @@ impl PaletteContainer {
             .vertical(),
             data.palette.scroll_id,
         );
-        let preview = LapceEditorView::new(preview_editor.view_id, None);
+        let preview =
+            LapceEditorView::new(preview_editor.view_id, WidgetId::next(), None);
         Self {
             content_size: Size::ZERO,
             input: WidgetPod::new(input.boxed()),
@@ -387,9 +389,9 @@ impl Widget<LapceTabData> for PaletteContainer {
     }
 
     fn paint(&mut self, ctx: &mut PaintCtx, data: &LapceTabData, env: &Env) {
-        let shadow_width = 5.0;
         let rect = self.content_size.to_rect();
-        if data.config.ui.drop_shadow() {
+        let shadow_width = data.config.ui.drop_shadow_width() as f64;
+        if shadow_width > 0.0 {
             ctx.blurred_rect(
                 rect,
                 shadow_width,
