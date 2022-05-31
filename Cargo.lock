@@ -2078,6 +2078,7 @@ dependencies = [
  "tree-sitter-go",
  "tree-sitter-highlight",
  "tree-sitter-html",
+ "tree-sitter-jakt",
  "tree-sitter-java",
  "tree-sitter-javascript",
  "tree-sitter-json",
@@ -4331,6 +4332,15 @@ name = "tree-sitter-html"
 version = "0.19.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "184e6b77953a354303dc87bf5fe36558c83569ce92606e7b382a0dc1b7443443"
+dependencies = [
+ "cc",
+ "tree-sitter",
+]
+
+[[package]]
+name = "tree-sitter-jakt"
+version = "0.0.1"
+source = "git+https://github.com/ghishadow/tree-sitter-jakt.git#a029ed427484e0627a92e790bbe983b113ea325f"
 dependencies = [
  "cc",
  "tree-sitter",

@@ -130,7 +130,7 @@ pub enum LapceLanguage {
     Html,
     #[cfg(feature = "lang-java")]
     Java,
-    #[cfg(feature = "lapce-jakt")]
+    #[cfg(feature = "lang-jakt")]
     Jakt,
 }
 
@@ -334,7 +334,7 @@ const LANGUAGES: &[SyntaxProperties] = &[
     SyntaxProperties {
         id: LapceLanguage::Jakt,
         language: tree_sitter_jakt::language,
-        highlight: tree_sitter_jakt::HIGHLIGHT_QUERY,
+        highlight: tree_sitter_jakt::HIGHLIGHTS_QUERY,
         comment: "//",
         indent: "  ",
         code_lens: (DEFAULT_CODE_LENS_LIST, DEFAULT_CODE_LENS_IGNORE_LIST),

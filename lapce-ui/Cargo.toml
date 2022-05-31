@@ -74,7 +74,7 @@ all-languages = [
     "lang-md",
     "lang-html",
     "lang-java",
-    "lang-jakt",
+    "lang-jakt"
 ]
 lang-rust = ["lapce-core/lang-rust"]
 lang-go = ["lapce-core/lang-go"]
