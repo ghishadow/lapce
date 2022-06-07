@@ -30,7 +30,7 @@ tree-sitter-json = { version = "0.19.0", optional = true }
 tree-sitter-md = { git = "https://github.com/MDeiml/tree-sitter-markdown.git", version = "0.0.1", optional = true  }
 tree-sitter-html = { version = "0.19.0", optional = true }
 tree-sitter-java = { git = "https://github.com/tree-sitter/tree-sitter-java.git", version = "0.20.0", optional = true  }
-tree-sitter-jakt = { git = "https://github.com/ghishadow/tree-sitter-jakt.git", version = "0.0.1", optional = true}
+tree-sitter-jakt = { git = "https://github.com/ghishadow/tree-sitter-jakt.git", commit = "9e1eceba7985404c33fa9db40659ed39de4af1c2", optional = true}
 lsp-types = { version = "0.89.2", features = ["proposed"] }
 xi-rope = { git = "https://github.com/lapce/xi-editor", features = ["serde"] }
 lapce-rpc = { path = "../lapce-rpc" }
