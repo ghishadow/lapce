@@ -1,44 +1,88 @@
 <h1 align="center">
+  <a href="https://lapce.dev" target="_blank">
   <img src="extra/images/logo.png" width=200 height=200/><br>
   Lapce
+  </a>
 </h1>
 
-<h4 align="center">Lightning-fast and Powerful Code Editor written in Rust</h4>
+<h4 align="center">Lightning-fast And Powerful Code Editor</h4>
 
-[![chat](https://img.shields.io/badge/zulip-join_chat-brightgreen.svg)](https://lapce.zulipchat.com)
+<div align="center">
+  <a href="https://github.com/lapce/lapce/actions/workflows/ci.yml" target="_blank">
+    <img src="https://github.com/lapce/lapce/actions/workflows/ci.yml/badge.svg" />
+  </a>
+  <a href="https://discord.gg/n8tGJ6Rn6D" target="_blank">
+    <img src="https://img.shields.io/discord/946858761413328946?logo=discord" />
+  </a>
+  <a href="https://matrix.to/#/#lapce-editor:matrix.org" target="_blank">
+    <img src="https://img.shields.io/matrix/lapce-editor:matrix.org?color=turquoise&logo=Matrix" />
+  </a>
+  <a href="https://docs.lapce.dev" target="_blank">
+      <img src="https://img.shields.io/static/v1?label=Docs&message=docs.lapce.dev&color=blue" alt="Lapce Docs">
+  </a>
+</div>
+<br/>
 
 
-
-Lapce is written in pure Rust, with UI in [Druid](https://github.com/linebender/druid). It's using [Xi-Editor](https://github.com/xi-editor/xi-editor)'s [Rope Science](https://xi-editor.io/docs/rope_science_00.html) for text editing, and using [Wgpu](https://github.com/gfx-rs/wgpu) for rendering. 
+Lapce is written in pure Rust with a UI in [Druid](https://github.com/linebender/druid) (which is also written in Rust). It is designed with [Rope Science](https://xi-editor.io/docs/rope_science_00.html) from the [Xi-Editor](https://github.com/xi-editor/xi-editor) which makes for lightning-fast computation, and leverages [OpenGL](https://www.opengl.org/) for rendering. More information about the features of Lapce can be found on the [main website](https://lapce.dev) and user documentation can be found on [GitBook](https://docs.lapce.dev/).
 
 ![](https://github.com/lapce/lapce/blob/master/extra/images/screenshot.png?raw=true)
 
 ## Features
 
-* Modal Editing (Vim like) support as first class citizen (can be turned off as well)
-* Built in LSP support
-* Built in remote development support (inspired by [VSCode Remote Development](https://code.visualstudio.com/docs/remote/remote-overview))
-* Plugin can be written in programming languages that can compile to [WASI](https://wasi.dev/) (C, Rust, [AssemblyScript](https://www.assemblyscript.org/))
-* Built in terminal
+* Built-in LSP ([Language Server Protocol](https://microsoft.github.io/language-server-protocol/)) support to give you intelligent code features such as: completion, diagnostics and code actions
+* Modal editing support as first class citizen (Vim-like, and toggleable)
+* Built-in remote development support inspired by [VSCode Remote Development](https://code.visualstudio.com/docs/remote/remote-overview). Enjoy the benefits of a "local" experience, and seamlessly gain the full power of a remote system.
+* Plugins can be written in programming languages that can compile to the [WASI](https://wasi.dev/) format (C, Rust, [AssemblyScript](https://www.assemblyscript.org/))
+* Built-in terminal, so you can execute commands in your workspace, without leaving Lapce.
 
-## Build from source
+## Contributing
 
-### Install the Rust compiler with `rustup`
+Guidelines for contributing to Lapce can be found in [`CONTRIBUTING.md`](CONTRIBUTING.md).
 
-1. Install [`rustup.rs`](https://rustup.rs/).
+## Building from source
 
-### Dependencies
+It is easy to build Lapce from source on a GNU/Linux distribution. Cargo handles the build process, all you need to do, is ensure the correct dependencies are installed.
+
+1. Install the Rust compiler and Cargo using [`rustup.rs`](https://rustup.rs/). If you already have the toolchain, ensure you are using version 1.60 or higher.
+
+2. Install dependencies for your operating system:
+
 #### Ubuntu
 ```sh
-sudo apt-get install cmake pkg-config libfreetype6-dev libfontconfig1-dev libxcb-xfixes0-dev libxkbcommon-dev
+sudo apt install cmake pkg-config libfontconfig-dev libgtk-3-dev
 ```
-### Building
+#### Fedora
+```sh
+sudo dnf install gcc-c++ perl-FindBin perl-File-Compare gtk3-devel
+```
+
+3. Clone this repository (this command will clone to your home directory):
+```sh
+git clone https://github.com/lapce/lapce.git ~/lapce
+```
+
+4. `cd` into the repository, and run the build command with the release flag
+```sh
+cd ~/lapce
+```
+
 ```sh
 cargo build --release
 ```
-The exectuable will be available at `target/release/lapce`
 
-## Feedback
+> If you use a different distribution, and are having trouble finding appropriate dependencies, let us know in an issue!
 
-* Chat on [Zulip](https://lapce.zulipchat.com)
-* Join the discussion on [Reddit](https://www.reddit.com/r/lapce/)
+Once Lapce is compiled, the executable will be available in `target/release/lapce`.
+
+## Feedback & Contact
+
+The most popular place for Lapce developers and users is on the [Discord server](https://discord.gg/n8tGJ6Rn6D).
+
+Or, join the discussion on [Reddit](https://www.reddit.com/r/lapce/) where we are just getting started.
+
+There is also a [Matrix Space](https://matrix.to/#/#lapce-editor:matrix.org), which is linked to the content from the Discord server.
+
+## Licence
+
+Lapce is released under the Apache License Version 2, which is an open source licence. You may contribute to this project, or use the code as you please as long as you adhere to its conditions. You can find a copy of the licence text within `LICENSE`.

@@ -29,7 +29,7 @@ jobs:
       - name: Update rust toolchain
         run: rustup update --no-self-update ${{ matrix.version }} && rustup default ${{ matrix.version }}
       - name: Build
-        run: cargo build --release
+        run: cargo build --profile release-lto
       - name: Install WiX
         run: nuget install WiX
       - name: Crate msi installer
@@ -39,6 +39,10 @@ jobs:
           ./WiX.*/tools/light.exe -ext WixUIExtension -ext WixUtilExtension \
             -out "./Lapce-windows.msi" -sice:ICE61 -sice:ICE91 \
             "./lapce.wixobj"
+      - name: Create portable 
+        shell: pwsh
+        run: |
+          Compress-Archive ./target/release-lto/lapce.exe ./Lapce-windows-portable.zip
       - name: Upload msi installer
         uses: svenstaro/upload-release-action@v2
         with:

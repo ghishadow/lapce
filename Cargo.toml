@@ -1,21 +1,22 @@
 [package]
 name = "lapce"
-version = "0.0.6"
+version = "0.1.1"
 authors = ["Dongdong Zhou <dzhou121@gmail.com>"]
 edition = "2021"
+rust-version = "1.58"
 resolver = "2"
 
 [dependencies]
-lapce-core = { path = "./core" }
-lapce-proxy = { path = "./proxy" }
+lapce-ui = { path = "./lapce-ui" }
+lapce-proxy = { path = "./lapce-proxy" }
 
 [[bin]]
 name = "lapce"
-path = "core/src/bin/lapce.rs"
+path = "lapce-ui/src/bin/lapce.rs"
 
 [[bin]]
 name = "lapce-proxy"
-path = "proxy/src/bin/lapce-proxy.rs"
+path = "lapce-proxy/src/bin/lapce-proxy.rs"
 
 [workspace]
 members = ["core", "proxy", "rpc"]
@@ -27,3 +28,23 @@ split-debuginfo = "unpacked"
 codegen-units = 1
 lto = "thin"
 # debug = true
+members = ["lapce-ui", "lapce-proxy", "lapce-rpc", "lapce-data", "lapce-core"]
+
+[profile.release-lto]
+inherits = "release"
+lto = true
+codegen-units = 1
+
+# A profile which compiles all (non-workspace) dependencies in release mode
+# but Lapce code in dev mode. This gives a good debugging experience for your
+# code and fast performance of other people's code. After the initial
+# build subsequent ones are as fast as dev mode builds.
+# See https://doc.rust-lang.org/cargo/reference/profiles.html
+# To use this profile:
+#   cargo build --profile fastdev
+#   cargo run --profile fastdev --bin lapce
+[profile.fastdev.package."*"]
+opt-level = 3
+
+[profile.fastdev]
+inherits = "dev"
