@@ -19,7 +19,7 @@ name = "lapce-proxy"
 path = "lapce-proxy/src/bin/lapce-proxy.rs"
 
 [workspace]
-members = ["core", "proxy", "rpc"]
+members = ["lapce-ui", "lapce-proxy", "lapce-rpc", "lapce-data", "lapce-core"]
 
 [profile.dev]
 split-debuginfo = "unpacked"
@@ -27,8 +27,9 @@ split-debuginfo = "unpacked"
 [profile.release]
 codegen-units = 1
 lto = "thin"
+opt-level = "s" # Optimize for size
+strip = "debuginfo"
 # debug = true
-members = ["lapce-ui", "lapce-proxy", "lapce-rpc", "lapce-data", "lapce-core"]
 
 [profile.release-lto]
 inherits = "release"

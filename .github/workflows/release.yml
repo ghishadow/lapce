@@ -1,10 +1,10 @@
 name: Release
 
 on:
+  workflow_dispatch:
   push:
+    branches: [scoop_build]
     tags: ["v[0-9]+.[0-9]+.[0-9]+*"]
-    branches:
-      - scoop_build
 
 env:
   GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -29,7 +29,7 @@ jobs:
       - name: Update rust toolchain
         run: rustup update --no-self-update ${{ matrix.version }} && rustup default ${{ matrix.version }}
       - name: Build
-        run: cargo build --profile release-lto
+        run: cargo build --release
       - name: Install WiX
         run: nuget install WiX
       - name: Crate msi installer
@@ -51,3 +51,15 @@ jobs:
           file_glob: true
           tag: ${{ github.ref }}
           overwrite: true
+      - name: Upload portable
+        uses: svenstaro/upload-release-action@v2
+        with:
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          file: ./Lapce-windows-portable.zip
+          file_glob: true
+          tag: ${{ github.ref }}
+          overwrite: true
+
+
+
+
