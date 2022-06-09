@@ -104,7 +104,7 @@ impl PluginCatalog {
                 "https://raw.githubusercontent.com/{}/master/{}",
                 plugin.repository, plugin.wasm
             );
-            let mut resp = ureq::get(&url).call()?.into_reader();
+            let mut resp = reqwest::blocking::get(url)?;
             let mut file = std::fs::OpenOptions::new()
                 .create(true)
                 .truncate(true)
@@ -256,10 +256,7 @@ fn host_handle_notification(plugin_env: &PluginEnv) {
                 );
             }
             PluginNotification::DownloadFile { url, path } => {
-                let mut resp = ureq::get(&url)
-                    .call()
-                    .expect("request failed")
-                    .into_reader();
+                let mut resp = reqwest::blocking::get(url).expect("request failed");
                 let mut out = std::fs::File::create(
                     plugin_env.desc.dir.clone().unwrap().join(path),
                 )
@@ -331,10 +328,7 @@ pub fn wasi_write_object(wasi_env: &WasiEnv, object: &(impl Serialize + ?Sized))
 #[derive(Serialize, Deserialize, Debug)]
 pub enum PluginRequest {}
 
-pub struct PluginHandler {
-    #[allow(dead_code)]
-    dispatcher: Dispatcher,
-}
+pub struct PluginHandler {}
 
 fn find_all_plugins() -> Vec<PathBuf> {
     let mut plugin_paths = Vec::new();
