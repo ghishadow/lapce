@@ -4602,7 +4602,7 @@ dependencies = [
 [[package]]
 name = "tree-sitter-jakt"
 version = "0.0.1"
-source = "git+https://github.com/ghishadow/tree-sitter-jakt.git#a029ed427484e0627a92e790bbe983b113ea325f"
+source = "git+https://github.com/ghishadow/tree-sitter-jakt.git?branch=main#c2307cb5d164682c30daa1465144dd0866993787"
 dependencies = [
  "cc",
  "tree-sitter",
