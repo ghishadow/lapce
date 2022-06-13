@@ -4619,7 +4619,7 @@ dependencies = [
 [[package]]
 name = "tree-sitter-nix"
 version = "0.0.1"
-source = "git+https://github.com/atmnirbhar/tree-sitter-nix.git#6b71a810c0acd49b980c50fc79092561f7cee307"
+source = "git+https://github.com/atmnirbhar/tree-sitter-nix.git?branch=enable_hightlights#7148e2105c9cd7593d205c7ddad1a3fdf3be6030"
 dependencies = [
  "cc",
  "tree-sitter",
