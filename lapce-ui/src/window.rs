@@ -14,11 +14,11 @@ use std::cmp::Ordering;
 use std::sync::Arc;
 
 use crate::{
-    tab::{LapceTabHeader, LapceTabNew},
+    tab::{LapceTab, LapceTabHeader},
     title::Title,
 };
 
-pub struct LapceWindowNew {
+pub struct LapceWindow {
     pub title: WidgetPod<LapceWindowData, Box<dyn Widget<LapceWindowData>>>,
     pub tabs: Vec<WidgetPod<LapceWindowData, Box<dyn Widget<LapceWindowData>>>>,
     tab_headers: Vec<
@@ -29,7 +29,7 @@ pub struct LapceWindowNew {
     >,
 }
 
-impl LapceWindowNew {
+impl LapceWindow {
     pub fn new(data: &LapceWindowData) -> Self {
         let title = WidgetPod::new(Title::new().boxed());
         let tabs = data
@@ -37,7 +37,7 @@ impl LapceWindowNew {
             .iter()
             .map(|tab_id| {
                 let data = data.tabs.get(tab_id).unwrap();
-                let tab = LapceTabNew::new(data);
+                let tab = LapceTab::new(data);
                 let tab = tab.lens(LapceTabLens(*tab_id));
                 WidgetPod::new(tab.boxed())
             })
@@ -77,7 +77,7 @@ impl LapceWindowNew {
             data.keypress.clone(),
             ctx.get_external_handle(),
         );
-        let tab = LapceTabNew::new(&tab_data).lens(LapceTabLens(tab_id));
+        let tab = LapceTab::new(&tab_data).lens(LapceTabLens(tab_id));
         let tab_header = LapceTabHeader::new().lens(LapceTabLens(tab_id));
         data.tabs.insert(tab_id, tab_data);
         if replace_current {
@@ -167,7 +167,7 @@ impl LapceWindowNew {
     }
 }
 
-impl Widget<LapceWindowData> for LapceWindowNew {
+impl Widget<LapceWindowData> for LapceWindow {
     fn event(
         &mut self,
         ctx: &mut EventCtx,

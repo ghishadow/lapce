@@ -19,7 +19,7 @@ use regex::Regex;
 use std::str::FromStr;
 
 use crate::{
-    scroll::{LapceIdentityWrapper, LapceScrollNew},
+    scroll::{LapceIdentityWrapper, LapceScroll},
     svg::completion_svg,
 };
 
@@ -180,7 +180,7 @@ pub struct CompletionContainer {
     scroll_id: WidgetId,
     completion: WidgetPod<
         LapceTabData,
-        LapceIdentityWrapper<LapceScrollNew<LapceTabData, CompletionNew>>,
+        LapceIdentityWrapper<LapceScroll<LapceTabData, Completion>>,
     >,
     content_size: Size,
 }
@@ -188,7 +188,7 @@ pub struct CompletionContainer {
 impl CompletionContainer {
     pub fn new(data: &CompletionData) -> Self {
         let completion = LapceIdentityWrapper::wrap(
-            LapceScrollNew::new(CompletionNew::new()).vertical(),
+            LapceScroll::new(Completion::new()).vertical(),
             data.scroll_id,
         );
         Self {
@@ -376,21 +376,21 @@ impl Widget<LapceTabData> for CompletionContainer {
     }
 }
 
-pub struct CompletionNew {}
+pub struct Completion {}
 
-impl CompletionNew {
+impl Completion {
     pub fn new() -> Self {
         Self {}
     }
 }
 
-impl Default for CompletionNew {
+impl Default for Completion {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl Widget<LapceTabData> for CompletionNew {
+impl Widget<LapceTabData> for Completion {
     fn event(
         &mut self,
         _ctx: &mut EventCtx,

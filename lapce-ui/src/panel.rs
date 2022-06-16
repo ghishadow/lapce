@@ -16,13 +16,11 @@ use lapce_data::{
 };
 use serde_json::json;
 
-use crate::{
-    scroll::LapceScrollNew, split::LapceSplitNew, svg::get_svg, tab::LapceIcon,
-};
+use crate::{scroll::LapceScroll, split::LapceSplit, svg::get_svg, tab::LapceIcon};
 
 pub struct LapcePanel {
     header: WidgetPod<LapceTabData, Box<dyn Widget<LapceTabData>>>,
-    split: WidgetPod<LapceTabData, LapceSplitNew>,
+    split: WidgetPod<LapceTabData, LapceSplit>,
 }
 
 impl Widget<LapceTabData> for LapcePanel {
@@ -103,7 +101,7 @@ impl LapcePanel {
             Option<f64>,
         )>,
     ) -> Self {
-        let mut split = LapceSplitNew::new(split_id).direction(split_direction);
+        let mut split = LapceSplit::new(split_id).direction(split_direction);
         match split_direction {
             SplitDirection::Vertical => {}
             SplitDirection::Horizontal => split = split.hide_border(),
@@ -179,7 +177,7 @@ struct PanelSection {
     header: Option<WidgetPod<LapceTabData, Box<dyn Widget<LapceTabData>>>>,
     content: WidgetPod<
         LapceTabData,
-        LapceScrollNew<LapceTabData, Box<dyn Widget<LapceTabData>>>,
+        LapceScroll<LapceTabData, Box<dyn Widget<LapceTabData>>>,
     >,
 }
 
@@ -189,7 +187,7 @@ impl PanelSection {
         header: Option<Box<dyn Widget<LapceTabData>>>,
         content: Box<dyn Widget<LapceTabData>>,
     ) -> Self {
-        let content = LapceScrollNew::new(content).vertical();
+        let content = LapceScroll::new(content).vertical();
         Self {
             header: header.map(WidgetPod::new),
             content: WidgetPod::new(content),
@@ -364,6 +362,7 @@ impl Widget<LapceTabData> for PanelSectionHeader {
                 }
             }
 
+            ctx.clip(rect);
             let text_layout = ctx
                 .text()
                 .new_text_layout(self.text.clone())
@@ -583,6 +582,7 @@ impl Widget<LapceTabData> for PanelMainHeader {
                 }
             }
 
+            ctx.clip(rect);
             let background = match position {
                 Some(PanelPosition::BottomLeft)
                 | Some(PanelPosition::BottomRight) => LapceTheme::EDITOR_BACKGROUND,

@@ -24,13 +24,13 @@ use xi_rope::{spans::Spans, Rope};
 use crate::alert::AlertContentData;
 use crate::data::LapceWorkspace;
 use crate::document::BufferContent;
+use crate::menu::MenuKind;
 use crate::rich_text::RichText;
 use crate::{
     data::{EditorTabChild, SplitContent},
-    editor::EditorLocationNew,
+    editor::EditorLocation,
     keypress::{KeyMap, KeyPress},
-    menu::MenuItem,
-    palette::{NewPaletteItem, PaletteType},
+    palette::{PaletteItem, PaletteType},
     proxy::ProxyStatus,
     search::Match,
     split::{SplitDirection, SplitMoveDirection},
@@ -349,6 +349,14 @@ pub enum LapceWorkbenchCommand {
 
     #[strum(serialize = "source_control_commit")]
     SourceControlCommit,
+
+    #[strum(serialize = "export_current_theme_settings")]
+    #[strum(message = "Export current settings to a theme file")]
+    ExportCurrentThemeSettings,
+
+    #[strum(serialize = "install_theme")]
+    #[strum(message = "Install current theme file")]
+    InstallTheme,
 }
 
 #[derive(Debug)]
@@ -371,7 +379,7 @@ pub enum LapceUICommand {
     InitBufferContent {
         path: PathBuf,
         content: Rope,
-        locations: Vec<(WidgetId, EditorLocationNew)>,
+        locations: Vec<(WidgetId, EditorLocation)>,
     },
     OpenFileChanged {
         path: PathBuf,
@@ -391,10 +399,10 @@ pub enum LapceUICommand {
         path: PathBuf,
         content: String,
         editor_view_id: WidgetId,
-        location: EditorLocationNew,
+        location: EditorLocation,
     },
     ShowAlert(AlertContentData),
-    ShowMenu(Point, Arc<Vec<MenuItem>>),
+    ShowMenu(Point, Arc<Vec<MenuKind>>),
     UpdateSearch(String),
     GlobalSearchResult(String, Arc<HashMap<PathBuf, Vec<Match>>>),
     CancelFilePicker,
@@ -420,13 +428,14 @@ pub enum LapceUICommand {
     ShowKeybindings,
     FocusEditor,
     RunPalette(Option<PaletteType>),
-    RunPaletteReferences(Vec<EditorLocationNew>),
+    RunPaletteReferences(Vec<EditorLocation>),
     InitPaletteInput(String),
     UpdatePaletteInput(String),
-    UpdatePaletteItems(String, Vec<NewPaletteItem>),
-    FilterPaletteItems(String, String, Vec<NewPaletteItem>),
+    UpdatePaletteItems(String, Vec<PaletteItem>),
+    FilterPaletteItems(String, String, Vec<PaletteItem>),
     UpdateKeymapsFilter(String),
-    UpdateSettingsFile(String, serde_json::Value),
+    ResetSettingsFile(String, String),
+    UpdateSettingsFile(String, String, serde_json::Value),
     UpdateSettingsFilter(String),
     FilterKeymaps(String, Arc<Vec<KeyMap>>, Arc<Vec<LapceCommand>>),
     UpdatePickerPwd(PathBuf),
@@ -464,7 +473,7 @@ pub enum LapceUICommand {
         highlights: Arc<Spans<Style>>,
     },
     UpdateSyntax {
-        path: PathBuf,
+        content: BufferContent,
         rev: u64,
         syntax: SingleUse<Syntax>,
     },
@@ -513,11 +522,11 @@ pub enum LapceUICommand {
     EditorTabSwap(usize, usize),
     JumpToPosition(Option<WidgetId>, Position),
     JumpToLine(Option<WidgetId>, usize),
-    JumpToLocation(Option<WidgetId>, EditorLocationNew),
+    JumpToLocation(Option<WidgetId>, EditorLocation),
     TerminalJumpToLine(i32),
-    GoToLocationNew(WidgetId, EditorLocationNew),
-    GotoReference(WidgetId, usize, EditorLocationNew),
-    GotoDefinition(WidgetId, usize, EditorLocationNew),
+    GoToLocationNew(WidgetId, EditorLocation),
+    GotoReference(WidgetId, usize, EditorLocation),
+    GotoDefinition(WidgetId, usize, EditorLocation),
     PaletteReferences(usize, Vec<Location>),
     GotoLocation(Location),
     ActiveFileChanged {

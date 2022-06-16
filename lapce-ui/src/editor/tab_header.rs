@@ -20,8 +20,8 @@ use lapce_data::{
 
 use crate::{
     editor::tab_header_content::LapceEditorTabHeaderContent,
-    scroll::LapceScrollNew,
-    svg::{file_svg_new, get_svg},
+    scroll::LapceScroll,
+    svg::{file_svg, get_svg},
     tab::LapceIcon,
 };
 
@@ -29,7 +29,7 @@ pub struct LapceEditorTabHeader {
     pub widget_id: WidgetId,
     pub content: WidgetPod<
         LapceTabData,
-        LapceScrollNew<LapceTabData, LapceEditorTabHeaderContent>,
+        LapceScroll<LapceTabData, LapceEditorTabHeaderContent>,
     >,
     icons: Vec<LapceIcon>,
     mouse_pos: Point,
@@ -38,9 +38,9 @@ pub struct LapceEditorTabHeader {
 
 impl LapceEditorTabHeader {
     pub fn new(widget_id: WidgetId) -> Self {
-        let content =
-            LapceScrollNew::new(LapceEditorTabHeaderContent::new(widget_id))
-                .horizontal();
+        let content = LapceScroll::new(LapceEditorTabHeaderContent::new(widget_id))
+            .horizontal()
+            .vertical_scroll_for_horizontal();
         Self {
             widget_id,
             content: WidgetPod::new(content),
@@ -98,7 +98,7 @@ impl LapceEditorTabHeader {
                 let editor_buffer = data.editor_view_content(*view_id);
 
                 if let BufferContent::File(path) = &editor_buffer.editor.content {
-                    svg = file_svg_new(path);
+                    svg = file_svg(path);
                     if let Some(file_name) = path.file_name() {
                         if let Some(s) = file_name.to_str() {
                             text = s.to_string();

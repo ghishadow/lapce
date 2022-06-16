@@ -11,7 +11,7 @@ use lapce_data::{
     command::{LapceUICommand, LAPCE_UI_COMMAND},
     config::LapceTheme,
     data::{EditorDiagnostic, LapceTabData, PanelKind},
-    editor::EditorLocationNew,
+    editor::EditorLocation,
     problem::ProblemData,
     proxy::path_from_url,
     split::SplitDirection,
@@ -20,7 +20,7 @@ use lsp_types::DiagnosticSeverity;
 
 use crate::{
     panel::{LapcePanel, PanelHeaderKind},
-    svg::{file_svg_new, get_svg},
+    svg::{file_svg, get_svg},
 };
 
 pub fn new_problem_panel(data: &ProblemData) -> LapcePanel {
@@ -131,7 +131,7 @@ impl ProblemContent {
                         LAPCE_UI_COMMAND,
                         LapceUICommand::JumpToLocation(
                             None,
-                            EditorLocationNew {
+                            EditorLocation {
                                 path: path.clone(),
                                 position: Some(d.diagnostic.range.start),
                                 scroll_offset: None,
@@ -156,7 +156,7 @@ impl ProblemContent {
                             LAPCE_UI_COMMAND,
                             LapceUICommand::JumpToLocation(
                                 None,
-                                EditorLocationNew {
+                                EditorLocation {
                                     path: related
                                         .location
                                         .uri
@@ -270,7 +270,7 @@ impl Widget<LapceTabData> for ProblemContent {
             }
 
             let padding = (line_height - 14.0) / 2.0;
-            let svg = file_svg_new(path);
+            let svg = file_svg(path);
             let rect = Size::new(line_height, line_height)
                 .to_rect()
                 .with_origin(Point::new(0.0, line_height * i as f64))

@@ -8,16 +8,16 @@ use lapce_data::{
     command::{LapceUICommand, LAPCE_UI_COMMAND},
     config::LapceTheme,
     data::{LapceTabData, PanelKind},
-    editor::EditorLocationNew,
+    editor::EditorLocation,
     split::SplitDirection,
 };
 
 use crate::{
     editor::view::LapceEditorView,
     panel::{LapcePanel, PanelHeaderKind},
-    scroll::LapceScrollNew,
-    split::LapceSplitNew,
-    svg::file_svg_new,
+    scroll::LapceScroll,
+    split::LapceSplit,
+    svg::file_svg,
 };
 
 pub fn new_search_panel(data: &LapceTabData) -> LapcePanel {
@@ -30,11 +30,11 @@ pub fn new_search_panel(data: &LapceTabData) -> LapcePanel {
         .hide_header()
         .hide_gutter()
         .padding((15.0, 15.0));
-    let split = LapceSplitNew::new(data.search.split_id)
+    let split = LapceSplit::new(data.search.split_id)
         .horizontal()
         .with_child(input.boxed(), None, 100.0)
         .with_flex_child(
-            LapceScrollNew::new(SearchContent::new().boxed())
+            LapceScroll::new(SearchContent::new().boxed())
                 .vertical()
                 .boxed(),
             None,
@@ -91,7 +91,7 @@ impl SearchContent {
                         LAPCE_UI_COMMAND,
                         LapceUICommand::JumpToLocation(
                             None,
-                            EditorLocationNew {
+                            EditorLocation {
                                 path: path.clone(),
                                 position: Some(lsp_types::Position {
                                     line: *line_number as u32 - 1,
@@ -202,7 +202,7 @@ impl Widget<LapceTabData> for SearchContent {
                 continue;
             }
 
-            let svg = file_svg_new(path);
+            let svg = file_svg(path);
             let rect = Size::new(self.line_height, self.line_height)
                 .to_rect()
                 .with_origin(Point::new(0.0, self.line_height * i as f64))
