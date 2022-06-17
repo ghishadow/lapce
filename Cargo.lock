@@ -2178,6 +2178,7 @@ dependencies = [
  "tree-sitter",
  "tree-sitter-c",
  "tree-sitter-cpp",
+ "tree-sitter-dockerfile",
  "tree-sitter-elixir",
  "tree-sitter-go",
  "tree-sitter-highlight",
@@ -4553,6 +4554,15 @@ name = "tree-sitter-cpp"
 version = "0.20.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8a869e3c5cef4e5db4e9ab16a8dc84d73010e60ada14cdc60d2f6d8aed17779d"
+dependencies = [
+ "cc",
+ "tree-sitter",
+]
+
+[[package]]
+name = "tree-sitter-dockerfile"
+version = "0.1.0"
+source = "git+https://github.com/syntacti/tree-sitter-dockerfile?branch=main#557ae8cd5f0db547823374a814a581a85f2d37e3"
 dependencies = [
  "cc",
  "tree-sitter",
