@@ -504,7 +504,7 @@ mod test {
 
     #[test]
     #[cfg(feature = "lang-elixir")]
-    fn test_exlixir_lang() {
+    fn test_elixir_lang() {
         assert_language(LapceLanguage::Elixir, &["ex"]);
     }
 
