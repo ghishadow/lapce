@@ -314,7 +314,7 @@ const LANGUAGES: &[SyntaxProperties] = &[
     SyntaxProperties {
         id: LapceLanguage::Html,
         language: tree_sitter_html::language,
-        highlight: tree_sitter_html::HIGHLIGHT_QUERY,
+        highlight: tree_sitter_html::HIGHLIGHTS_QUERY,
         comment: "",
         indent: "    ",
         code_lens: (DEFAULT_CODE_LENS_LIST, DEFAULT_CODE_LENS_IGNORE_LIST),
