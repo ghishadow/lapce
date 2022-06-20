@@ -81,6 +81,8 @@ all-languages = [
     "lang-swift",
     "lang-ql",
     "lang-haskell",
+    "lang-org",
+     "lang-hcl",
 ]
 lang-rust = ["lapce-core/lang-rust"]
 lang-go = ["lapce-core/lang-go"]
@@ -101,3 +103,5 @@ lang-elm = ["lapce-core/lang-elm"]
 lang-swift = ["lapce-core/lang-swift"]
 lang-ql = ["lapce-core/lang-ql"]
 lang-haskell = ["lapce-core/lang-haskell"]
+lang-org = ["lapce-core/lang-org"]
+lang-hcl = ["lapce-core/lang-hcl"]

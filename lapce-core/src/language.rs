@@ -138,6 +138,10 @@ pub enum LapceLanguage {
     QL,
     #[cfg(feature = "lang-haskell")]
     Haskell,
+    #[cfg(feature = "lang-org")]
+    Org,
+    #[cfg(feature = "lang-hcl")]
+    Hcl,
 }
 
 // NOTE: Elements in the array must be in the same order as the enum variants of
@@ -376,6 +380,26 @@ const LANGUAGES: &[SyntaxProperties] = &[
         code_lens: (DEFAULT_CODE_LENS_LIST, DEFAULT_CODE_LENS_IGNORE_LIST),
         extensions: &["hs"],
     },
+    #[cfg(feature = "lang-org")]
+    SyntaxProperties {
+        id: LapceLanguage::Org,
+        language: tree_sitter_org::language,
+        highlight: tree_sitter_org::HIGHLIGHTS_QUERY,
+        comment: "#",
+        indent: "  ",
+        code_lens: (DEFAULT_CODE_LENS_LIST, DEFAULT_CODE_LENS_IGNORE_LIST),
+        extensions: &["org"],
+    },
+    #[cfg(feature = "lang-hcl")]
+    SyntaxProperties {
+        id: LapceLanguage::Hcl,
+        language: tree_sitter_hcl::language,
+        highlight: tree_sitter_hcl::HIGHLIGHTS_QUERY,
+        comment: "//",
+        indent: "  ",
+        code_lens: (DEFAULT_CODE_LENS_LIST, DEFAULT_CODE_LENS_IGNORE_LIST),
+        extensions: &["hcl", "tf"],
+    },
 ];
 
 impl LapceLanguage {
@@ -613,5 +637,15 @@ mod test {
     #[cfg(feature = "lang-haskell")]
     fn test_haskell_lang() {
         assert_language(LapceLanguage::Haskell, &["hs"]);
+    }
+    #[test]
+    #[cfg(feature = "lang-org")]
+    fn test_org_lang() {
+        assert_language(LapceLanguage::Org, &["org"]);
+    }
+    #[test]
+    #[cfg(feature = "lang-hcl")]
+    fn test_hcl_lang() {
+        assert_language(LapceLanguage::Hcl, &["hcl"]);
     }
 }
