@@ -3,21 +3,25 @@ use std::{iter::Iterator, sync::Arc};
 use druid::{
     kurbo::Line,
     piet::{Text, TextLayout as TextLayoutTrait, TextLayoutBuilder},
-    BoxConstraints, Command, Env, Event, EventCtx, FontFamily, LayoutCtx, LifeCycle,
+    BoxConstraints, Command, Env, Event, EventCtx, LayoutCtx, LifeCycle,
     LifeCycleCtx, MouseButton, MouseEvent, PaintCtx, Point, RenderContext, Size,
     Target, UpdateCtx, Widget, WidgetId,
 };
+use lapce_core::command::FocusCommand;
 use lapce_data::{
-    command::{LapceUICommand, LAPCE_UI_COMMAND},
+    command::{
+        CommandKind, LapceCommand, LapceUICommand, LAPCE_COMMAND, LAPCE_UI_COMMAND,
+    },
     config::LapceTheme,
     data::{DragContent, EditorTabChild, LapceTabData},
     document::BufferContent,
     editor::TabRect,
+    proxy::VERSION,
 };
 
 use crate::{
     editor::tab::TabRectRenderer,
-    svg::{file_svg_new, get_svg},
+    svg::{file_svg, get_svg},
 };
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -90,7 +94,10 @@ impl LapceEditorTabHeaderContent {
                     .unwrap();
                 let editor_tab = Arc::make_mut(editor_tab);
 
-                if editor_tab.active != tab_idx {
+                if *data.main_split.active_tab != Some(self.widget_id)
+                    || editor_tab.active != tab_idx
+                {
+                    data.main_split.active_tab = Arc::new(Some(self.widget_id));
                     editor_tab.active = tab_idx;
                     ctx.submit_command(Command::new(
                         LAPCE_UI_COMMAND,
@@ -215,6 +222,7 @@ impl LapceEditorTabHeaderContent {
                 return;
             }
 
+            let mut child = child;
             child.set_editor_tab(data, editor_tab.widget_id);
             let editor_tab = data
                 .main_split
@@ -258,6 +266,12 @@ impl Widget<LapceTabData> for LapceEditorTabHeaderContent {
                 self.mouse_down(ctx, data, mouse_event);
             }
             Event::MouseUp(mouse_event) => {
+                let editor_tab = data
+                    .main_split
+                    .editor_tabs
+                    .get_mut(&self.widget_id)
+                    .unwrap();
+
                 let mut close_tab = |tab_idx: usize, was_active: bool| {
                     if was_active {
                         ctx.submit_command(Command::new(
@@ -268,17 +282,14 @@ impl Widget<LapceTabData> for LapceEditorTabHeaderContent {
                     }
 
                     ctx.submit_command(Command::new(
-                        LAPCE_UI_COMMAND,
-                        LapceUICommand::EditorTabRemove(tab_idx, true, true),
-                        Target::Widget(self.widget_id),
+                        LAPCE_COMMAND,
+                        LapceCommand {
+                            kind: CommandKind::Focus(FocusCommand::SplitClose),
+                            data: None,
+                        },
+                        Target::Widget(editor_tab.children[tab_idx].widget_id()),
                     ));
                 };
-
-                let editor_tab = data
-                    .main_split
-                    .editor_tabs
-                    .get_mut(&self.widget_id)
-                    .unwrap();
 
                 match self.mouse_down_target.take() {
                     // Was the left button released on the close icon that started the close?
@@ -344,22 +355,28 @@ impl Widget<LapceTabData> for LapceEditorTabHeaderContent {
             let mut text = "".to_string();
             let mut svg = get_svg("default_file.svg").unwrap();
             match child {
-                EditorTabChild::Editor(view_id, _) => {
+                EditorTabChild::Editor(view_id, _, _) => {
                     let editor = data.main_split.editors.get(view_id).unwrap();
                     if let BufferContent::File(path) = &editor.content {
-                        svg = file_svg_new(path);
+                        svg = file_svg(path);
                         if let Some(file_name) = path.file_name() {
                             if let Some(s) = file_name.to_str() {
                                 text = s.to_string();
                             }
                         }
+                    } else if let BufferContent::Scratch(..) = &editor.content {
+                        text = editor.content.file_name().to_string();
                     }
                 }
+                EditorTabChild::Settings(_, _) => {
+                    text = format!("Settings v{}", VERSION);
+                }
             }
+            let font_size = data.config.ui.font_size() as f64;
             let text_layout = ctx
                 .text()
                 .new_text_layout(text)
-                .font(FontFamily::SYSTEM_UI, 13.0)
+                .font(data.config.ui.font_family(), font_size)
                 .text_color(
                     data.config
                         .get_color_unchecked(LapceTheme::EDITOR_FOREGROUND)
@@ -368,7 +385,9 @@ impl Widget<LapceTabData> for LapceEditorTabHeaderContent {
                 .build()
                 .unwrap();
             let text_size = text_layout.size();
-            let width = (text_size.width + height * 2.0).max(100.0);
+            let width =
+                (text_size.width + height + (height - font_size) / 2.0 + font_size)
+                    .max(data.config.ui.tab_min_width() as f64);
             let close_size = 24.0;
             let inflate = (height - close_size) / 2.0;
             let tab_rect = TabRect {

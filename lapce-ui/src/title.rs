@@ -4,10 +4,12 @@ use crate::svg::get_svg;
 use druid::{
     kurbo::Line,
     piet::{Text, TextLayout, TextLayoutBuilder},
-    BoxConstraints, Color, Command, Env, Event, EventCtx, FontFamily, LayoutCtx,
-    LifeCycle, LifeCycleCtx, MouseEvent, PaintCtx, Point, Rect, RenderContext, Size,
-    Target, UpdateCtx, Widget,
+    BoxConstraints, Color, Command, Env, Event, EventCtx, LayoutCtx, LifeCycle,
+    LifeCycleCtx, MouseEvent, PaintCtx, Point, Rect, RenderContext, Size, Target,
+    UpdateCtx, Widget,
 };
+#[cfg(target_os = "macos")]
+use druid::{WindowConfig, WindowState};
 use lapce_data::{
     command::{
         CommandKind, LapceCommand, LapceUICommand, LapceWorkbenchCommand,
@@ -15,7 +17,7 @@ use lapce_data::{
     },
     config::LapceTheme,
     data::{LapceWindowData, LapceWorkspaceType},
-    menu::MenuItem,
+    menu::{MenuItem, MenuKind},
     proxy::ProxyStatus,
 };
 use serde_json::json;
@@ -62,7 +64,8 @@ impl Widget<LapceWindowData> for Title {
         &mut self,
         ctx: &mut EventCtx,
         event: &Event,
-        _data: &mut LapceWindowData,
+        #[cfg(target_os = "macos")] data: &mut LapceWindowData,
+        #[cfg(not(target_os = "macos"))] _data: &mut LapceWindowData,
         _env: &Env,
     ) {
         match event {
@@ -78,6 +81,21 @@ impl Widget<LapceWindowData> for Title {
             }
             Event::MouseDown(mouse_event) => {
                 self.mouse_down(ctx, mouse_event);
+            }
+            #[cfg(target_os = "macos")]
+            Event::MouseUp(mouse_event) => {
+                if mouse_event.count >= 2 {
+                    let state = match ctx.window().get_window_state() {
+                        WindowState::Maximized => WindowState::Restored,
+                        WindowState::Restored => WindowState::Maximized,
+                        WindowState::Minimized => WindowState::Maximized,
+                    };
+                    ctx.submit_command(
+                        druid::commands::CONFIGURE_WINDOW
+                            .with(WindowConfig::default().set_window_state(state))
+                            .to(Target::Window(data.window_id)),
+                    )
+                }
             }
             _ => {}
         }
@@ -146,7 +164,10 @@ impl Widget<LapceWindowData> for Title {
                 let text_layout = ctx
                     .text()
                     .new_text_layout(text)
-                    .font(FontFamily::SYSTEM_UI, 13.0)
+                    .font(
+                        data.config.ui.font_family(),
+                        data.config.ui.font_size() as f64,
+                    )
                     .text_color(
                         data.config
                             .get_color_unchecked(LapceTheme::EDITOR_BACKGROUND)
@@ -165,7 +186,10 @@ impl Widget<LapceWindowData> for Title {
                 let text_layout = ctx
                     .text()
                     .new_text_layout(text)
-                    .font(FontFamily::SYSTEM_UI, 13.0)
+                    .font(
+                        data.config.ui.font_family(),
+                        data.config.ui.font_size() as f64,
+                    )
                     .text_color(
                         data.config
                             .get_color_unchecked(LapceTheme::EDITOR_BACKGROUND)
@@ -224,26 +248,26 @@ impl Widget<LapceWindowData> for Title {
         let command_rect =
             command_rect.with_size(Size::new(x - command_rect.x0, size.height));
 
-        let mut menu_items = vec![MenuItem {
+        let mut menu_items = vec![MenuKind::Item(MenuItem {
             desc: None,
             command: LapceCommand {
                 kind: CommandKind::Workbench(LapceWorkbenchCommand::ConnectSshHost),
                 data: None,
             },
-        }];
+        })];
 
         if cfg!(target_os = "windows") {
-            menu_items.push(MenuItem {
+            menu_items.push(MenuKind::Item(MenuItem {
                 desc: None,
                 command: LapceCommand {
                     kind: CommandKind::Workbench(LapceWorkbenchCommand::ConnectWsl),
                     data: None,
                 },
-            });
+            }));
         }
 
         if tab.workspace.kind.is_remote() {
-            menu_items.push(MenuItem {
+            menu_items.push(MenuKind::Item(MenuItem {
                 desc: None,
                 command: LapceCommand {
                     kind: CommandKind::Workbench(
@@ -251,7 +275,7 @@ impl Widget<LapceWindowData> for Title {
                     ),
                     data: None,
                 },
-            });
+            }));
         }
 
         self.commands.push((
@@ -294,7 +318,10 @@ impl Widget<LapceWindowData> for Title {
         let text_layout = ctx
             .text()
             .new_text_layout(text)
-            .font(FontFamily::SYSTEM_UI, 13.0)
+            .font(
+                data.config.ui.font_family(),
+                data.config.ui.font_size() as f64,
+            )
             .text_color(
                 data.config
                     .get_color_unchecked(LapceTheme::EDITOR_FOREGROUND)
@@ -308,14 +335,14 @@ impl Widget<LapceWindowData> for Title {
         );
         x += text_layout.size().width.round() + padding;
         let menu_items = vec![
-            MenuItem {
+            MenuKind::Item(MenuItem {
                 desc: None,
                 command: LapceCommand {
                     kind: CommandKind::Workbench(LapceWorkbenchCommand::OpenFolder),
                     data: None,
                 },
-            },
-            MenuItem {
+            }),
+            MenuKind::Item(MenuItem {
                 desc: None,
                 command: LapceCommand {
                     kind: CommandKind::Workbench(
@@ -323,7 +350,7 @@ impl Widget<LapceWindowData> for Title {
                     ),
                     data: None,
                 },
-            },
+            }),
         ];
         let command_rect =
             command_rect.with_size(Size::new(x - command_rect.x0, size.height));
@@ -368,7 +395,10 @@ impl Widget<LapceWindowData> for Title {
             let text_layout = ctx
                 .text()
                 .new_text_layout(branch)
-                .font(FontFamily::SYSTEM_UI, 13.0)
+                .font(
+                    data.config.ui.font_family(),
+                    data.config.ui.font_size() as f64,
+                )
                 .text_color(
                     data.config
                         .get_color_unchecked(LapceTheme::EDITOR_FOREGROUND)
@@ -388,14 +418,16 @@ impl Widget<LapceWindowData> for Title {
                 .source_control
                 .branches
                 .iter()
-                .map(|b| MenuItem {
-                    desc: Some(b.to_string()),
-                    command: LapceCommand {
-                        kind: CommandKind::Workbench(
-                            LapceWorkbenchCommand::CheckoutBranch,
-                        ),
-                        data: Some(json!(b.to_string())),
-                    },
+                .map(|b| {
+                    MenuKind::Item(MenuItem {
+                        desc: Some(b.to_string()),
+                        command: LapceCommand {
+                            kind: CommandKind::Workbench(
+                                LapceWorkbenchCommand::CheckoutBranch,
+                            ),
+                            data: Some(json!(b.to_string())),
+                        },
+                    })
                 })
                 .collect();
             self.commands.push((
@@ -431,7 +463,7 @@ impl Widget<LapceWindowData> for Title {
             ),
         );
         let menu_items = vec![
-            MenuItem {
+            MenuKind::Item(MenuItem {
                 desc: None,
                 command: LapceCommand {
                     kind: CommandKind::Workbench(
@@ -439,8 +471,8 @@ impl Widget<LapceWindowData> for Title {
                     ),
                     data: None,
                 },
-            },
-            MenuItem {
+            }),
+            MenuKind::Item(MenuItem {
                 desc: None,
                 command: LapceCommand {
                     kind: CommandKind::Workbench(
@@ -448,8 +480,8 @@ impl Widget<LapceWindowData> for Title {
                     ),
                     data: None,
                 },
-            },
-            MenuItem {
+            }),
+            MenuKind::Item(MenuItem {
                 desc: None,
                 command: LapceCommand {
                     kind: CommandKind::Workbench(
@@ -457,14 +489,17 @@ impl Widget<LapceWindowData> for Title {
                     ),
                     data: None,
                 },
-            },
+            }),
         ];
         self.commands.push((
             settings_rect,
             Command::new(
                 LAPCE_UI_COMMAND,
                 LapceUICommand::ShowMenu(
-                    ctx.to_window(Point::new(size.width - 300.0, settings_rect.y1)),
+                    ctx.to_window(Point::new(
+                        size.width - size.height,
+                        settings_rect.y1,
+                    )),
                     Arc::new(menu_items),
                 ),
                 Target::Auto,

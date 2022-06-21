@@ -136,9 +136,13 @@ impl Editor {
                 let (delta, inval_lines) =
                     buffer.edit(&edits, EditType::InsertChars);
 
+                buffer.set_cursor_before(CursorMode::Insert(selection.clone()));
+
                 // Update selection
                 let mut selection =
                     selection.apply_delta(&delta, true, InsertDrift::Default);
+
+                buffer.set_cursor_after(CursorMode::Insert(selection.clone()));
 
                 deltas.push((delta, inval_lines));
                 // Apply late edits
@@ -158,9 +162,11 @@ impl Editor {
                     .map(|(selection, content)| (selection, content.as_str()))
                     .collect::<Vec<_>>();
 
-                let (delta, inval_lines) =
-                    buffer.edit(&edits_after, EditType::InsertChars);
-                deltas.push((delta, inval_lines));
+                if !edits_after.is_empty() {
+                    let (delta, inval_lines) =
+                        buffer.edit(&edits_after, EditType::InsertChars);
+                    deltas.push((delta, inval_lines));
+                }
 
                 // Adjust selection according to previous late edits
                 let mut adjustment = 0;
@@ -241,14 +247,16 @@ impl Editor {
             let second_half = buffer.slice_to_cow(offset..line_end).to_string();
 
             let indent = if has_unmatched_pair(&first_half) {
-                format!("{}    ", line_indent)
-            } else {
+                format!("{}{}", line_indent, buffer.indent_unit())
+            } else if second_half.trim().is_empty() {
                 let next_line_indent = buffer.indent_on_line(line + 1);
                 if next_line_indent.len() > line_indent.len() {
                     next_line_indent
                 } else {
                     line_indent.clone()
                 }
+            } else {
+                line_indent.clone()
             };
 
             let selection = Selection::region(region.min(), region.max());
@@ -713,10 +721,8 @@ impl Editor {
             ToggleLineComment => {
                 let mut lines = HashSet::new();
                 let selection = cursor.edit_selection(buffer);
-                let comment_token = syntax
-                    .map(|s| s.language.comment_token())
-                    .unwrap_or("//")
-                    .to_string();
+                let comment_token =
+                    syntax.map(|s| s.language.comment_token()).unwrap_or("//");
                 let mut had_comment = true;
                 let mut smallest_indent = usize::MAX;
                 for region in selection.regions() {
@@ -730,21 +736,21 @@ impl Editor {
                     };
                     let start = buffer.offset_of_line(line);
                     for content in buffer.text().lines(start..end) {
-                        let trimed_content = content.trim_start();
-                        if trimed_content.is_empty() {
+                        let trimmed_content = content.trim_start();
+                        if trimmed_content.is_empty() {
                             line += 1;
                             continue;
                         }
-                        let indent = content.len() - trimed_content.len();
+                        let indent = content.len() - trimmed_content.len();
                         if indent < smallest_indent {
                             smallest_indent = indent;
                         }
-                        if !trimed_content.starts_with(&comment_token) {
+                        if !trimmed_content.starts_with(&comment_token) {
                             had_comment = false;
                             lines.insert((line, indent, 0));
                         } else {
                             let had_space_after_comment =
-                                trimed_content.chars().nth(comment_token.len())
+                                trimmed_content.chars().nth(comment_token.len())
                                     == Some(' ');
                             lines.insert((
                                 line,
@@ -775,7 +781,7 @@ impl Editor {
                         selection.add_region(SelRegion::new(start, start, None))
                     }
                     buffer.edit(
-                        &[(&selection, &(comment_token + " "))],
+                        &[(&selection, &format!("{comment_token} "))],
                         EditType::InsertChars,
                     )
                 };
@@ -783,8 +789,14 @@ impl Editor {
                 vec![(delta, inval_lines)]
             }
             Undo => {
-                if let Some((delta, inval_lines)) = buffer.do_undo() {
-                    if let Some(new_cursor) =
+                if let Some((delta, inval_lines, cursor_mode)) = buffer.do_undo() {
+                    if let Some(cursor_mode) = cursor_mode {
+                        if modal {
+                            cursor.mode = CursorMode::Normal(cursor_mode.offset());
+                        } else {
+                            cursor.mode = cursor_mode;
+                        }
+                    } else if let Some(new_cursor) =
                         get_first_selection_after(cursor, buffer, &delta)
                     {
                         *cursor = new_cursor
@@ -797,8 +809,14 @@ impl Editor {
                 }
             }
             Redo => {
-                if let Some((delta, inval_lines)) = buffer.do_redo() {
-                    if let Some(new_cursor) =
+                if let Some((delta, inval_lines, cursor_mode)) = buffer.do_redo() {
+                    if let Some(cursor_mode) = cursor_mode {
+                        if modal {
+                            cursor.mode = CursorMode::Normal(cursor_mode.offset());
+                        } else {
+                            cursor.mode = cursor_mode;
+                        }
+                    } else if let Some(new_cursor) =
                         get_first_selection_after(cursor, buffer, &delta)
                     {
                         *cursor = new_cursor
@@ -886,7 +904,7 @@ impl Editor {
                 vec![]
             }
             Paste => {
-                let data = register.unamed.clone();
+                let data = register.unnamed.clone();
                 Self::do_paste(cursor, buffer, &data)
             }
             NewLineAbove => {
@@ -897,7 +915,12 @@ impl Editor {
                 } else {
                     buffer.first_non_blank_character_on_line(line)
                 };
-                Self::insert_new_line(buffer, cursor, Selection::caret(offset))
+                let delta =
+                    Self::insert_new_line(buffer, cursor, Selection::caret(offset));
+                if line == 0 {
+                    cursor.mode = CursorMode::Insert(Selection::caret(offset));
+                }
+                delta
             }
             NewLineBelow => {
                 let offset = cursor.offset();
@@ -1147,6 +1170,7 @@ impl Editor {
                     CursorMode::Normal(offset) => *offset,
                 };
 
+                buffer.reset_edit_type();
                 cursor.mode = CursorMode::Normal(offset);
                 cursor.horiz = None;
                 vec![]

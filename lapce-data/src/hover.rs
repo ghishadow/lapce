@@ -9,7 +9,8 @@ use xi_rope::Rope;
 
 use crate::{
     command::{LapceUICommand, LAPCE_UI_COMMAND},
-    config::{Config, EditorConfig, LapceTheme, Themes},
+    config::{Config, LapceTheme},
+    data::EditorDiagnostic,
     document::Document,
     proxy::LapceProxy,
     rich_text::{AttributesAdder, RichText, RichTextBuilder},
@@ -47,6 +48,8 @@ pub struct HoverData {
     pub active_item_index: usize,
     /// The hover items that are currently loaded
     pub items: Arc<Vec<RichText>>,
+    /// The text for the diagnostic(s) at the position
+    pub diagnostic_content: Option<RichText>,
 }
 
 impl HoverData {
@@ -65,6 +68,7 @@ impl HoverData {
 
             active_item_index: 0,
             items: Arc::new(Vec::new()),
+            diagnostic_content: None,
         }
     }
 
@@ -107,13 +111,14 @@ impl HoverData {
         self.active_item_index = 0;
     }
 
-    /// Send a request to update the hover at the given position anad file
+    /// Send a request to update the hover at the given position and file
     #[allow(clippy::too_many_arguments)]
     pub fn request(
-        &self,
+        &mut self,
         proxy: Arc<LapceProxy>,
         request_id: usize,
         doc: Arc<Document>,
+        diagnostics: Option<Arc<Vec<EditorDiagnostic>>>,
         position: Position,
         hover_widget_id: WidgetId,
         event_sink: ExtEventSink,
@@ -121,9 +126,10 @@ impl HoverData {
     ) {
         let buffer_id = doc.id();
         let syntax = doc.syntax().cloned();
-        let editor_config = config.editor.clone();
-        let themes = config.themes.clone();
 
+        // Clone config for use inside the proxy callback
+        let p_config = config.clone();
+        // Get the information/documentation that should be shown on hover
         proxy.get_hover(
             request_id,
             buffer_id,
@@ -131,12 +137,8 @@ impl HoverData {
             Box::new(move |result| {
                 if let Ok(resp) = result {
                     if let Ok(resp) = serde_json::from_value::<Hover>(resp) {
-                        let items = parse_hover_resp(
-                            syntax.as_ref(),
-                            resp,
-                            &editor_config,
-                            &themes,
-                        );
+                        let items =
+                            parse_hover_resp(syntax.as_ref(), resp, &p_config);
 
                         let _ = event_sink.submit_command(
                             LAPCE_UI_COMMAND,
@@ -147,6 +149,8 @@ impl HoverData {
                 }
             }),
         );
+
+        self.collect_diagnostics(position, diagnostics, config);
     }
 
     /// Receive the result of a hover request
@@ -161,6 +165,73 @@ impl HoverData {
         self.status = HoverStatus::Done;
         self.items = items;
     }
+
+    fn collect_diagnostics(
+        &mut self,
+        position: Position,
+        diagnostics: Option<Arc<Vec<EditorDiagnostic>>>,
+        config: Arc<Config>,
+    ) {
+        if let Some(diagnostics) = diagnostics {
+            let diagnostics = diagnostics
+                .iter()
+                .map(|diag| &diag.diagnostic)
+                .filter(|diag| {
+                    position >= diag.range.start && position < diag.range.end
+                });
+
+            // Get the dim foreground color for extra information about the error that is typically
+            // not significant
+            let dim_color =
+                config.get_color_unchecked(LapceTheme::EDITOR_DIM).clone();
+
+            // Build up the text for all the diagnostics
+            let mut content = RichTextBuilder::new();
+            for diagnostic in diagnostics {
+                content.push(&diagnostic.message);
+
+                // If there's a source of the message (ex: it came from rustc or rust-analyzer)
+                // then include that
+                if let Some(source) = &diagnostic.source {
+                    content.push(" ");
+                    content.push(source).text_color(dim_color.clone());
+
+                    // If there's an available error code then include that
+                    if let Some(code) = &diagnostic.code {
+                        // TODO: code description field has information like documentation on the
+                        // error code which could be useful to provide as a link
+
+                        // formatted as  diagsource(code)
+                        content.push("(").text_color(dim_color.clone());
+                        match code {
+                            lsp_types::NumberOrString::Number(v) => {
+                                content
+                                    .push(&v.to_string())
+                                    .text_color(dim_color.clone());
+                            }
+                            lsp_types::NumberOrString::String(v) => {
+                                content
+                                    .push(v.as_str())
+                                    .text_color(dim_color.clone());
+                            }
+                        }
+                        content.push(")").text_color(dim_color.clone());
+                    }
+                }
+
+                // TODO: The Related information field has data that can give better insight into
+                // the causes of the error
+                // (ex: The place where a variable was moved into when the 'main' error is at where
+                // you tried using it. This would work the best with some way to link to files)
+
+                content.push("\n");
+            }
+
+            self.diagnostic_content = Some(content.build());
+        } else {
+            self.diagnostic_content = None;
+        }
+    }
 }
 
 impl Default for HoverData {
@@ -172,8 +243,7 @@ impl Default for HoverData {
 fn parse_hover_markdown(
     syntax: Option<&Syntax>,
     text: &str,
-    config: &EditorConfig,
-    themes: &Themes,
+    config: &Config,
 ) -> RichText {
     use pulldown_cmark::{CowStr, Event, Options, Parser};
 
@@ -220,7 +290,6 @@ fn parse_hover_markdown(
                         &tag,
                         builder.add_attributes_for_range(start_offset..pos),
                         config,
-                        themes,
                     );
 
                     if let Tag::CodeBlock(_) = &tag {
@@ -232,7 +301,7 @@ fn parse_hover_markdown(
                                     if let Some(color) = style
                                         .fg_color
                                         .as_ref()
-                                        .and_then(|fg| themes.style_color(fg))
+                                        .and_then(|fg| config.get_style_color(fg))
                                     {
                                         builder
                                             .add_attributes_for_range(
@@ -260,7 +329,7 @@ fn parse_hover_markdown(
                 last_text = text;
             }
             Event::Code(text) => {
-                builder.push(&text).font_family(config.font_family());
+                builder.push(&text).font_family(config.editor.font_family());
                 code_block_indices.push(pos..(pos + text.len()));
                 pos += text.len();
             }
@@ -269,12 +338,11 @@ fn parse_hover_markdown(
             Event::Html(text) => {
                 builder
                     .push(&text)
-                    .font_family(config.font_family())
+                    .font_family(config.editor.font_family())
                     .text_color(
-                        themes
-                            .color(LapceTheme::MARKDOWN_BLOCKQUOTE)
-                            .cloned()
-                            .unwrap(),
+                        config
+                            .get_color_unchecked(LapceTheme::MARKDOWN_BLOCKQUOTE)
+                            .clone(),
                     );
                 pos += text.len();
             }
@@ -298,13 +366,10 @@ fn parse_hover_markdown(
 fn from_marked_string(
     syntax: Option<&Syntax>,
     text: MarkedString,
-    config: &EditorConfig,
-    themes: &Themes,
+    config: &Config,
 ) -> RichText {
     match text {
-        MarkedString::String(text) => {
-            parse_hover_markdown(syntax, &text, config, themes)
-        }
+        MarkedString::String(text) => parse_hover_markdown(syntax, &text, config),
         // This is a short version of a code block
         MarkedString::LanguageString(code) => {
             // TODO: We could simply construct the MarkdownText directly
@@ -313,7 +378,6 @@ fn from_marked_string(
                 syntax,
                 &format!("```{}\n{}\n```", code.language, code.value),
                 config,
-                themes,
             )
         }
     }
@@ -322,24 +386,22 @@ fn from_marked_string(
 fn parse_hover_resp(
     syntax: Option<&Syntax>,
     hover: lsp_types::Hover,
-    config: &EditorConfig,
-    themes: &Themes,
+    config: &Config,
 ) -> Vec<RichText> {
     match hover.contents {
         HoverContents::Scalar(text) => match text {
             MarkedString::String(text) => {
-                vec![parse_hover_markdown(syntax, &text, config, themes)]
+                vec![parse_hover_markdown(syntax, &text, config)]
             }
             MarkedString::LanguageString(code) => vec![parse_hover_markdown(
                 syntax,
                 &format!("```{}\n{}\n```", code.language, code.value),
                 config,
-                themes,
             )],
         },
         HoverContents::Array(array) => array
             .into_iter()
-            .map(|t| from_marked_string(syntax, t, config, themes))
+            .map(|t| from_marked_string(syntax, t, config))
             .collect(),
         HoverContents::Markup(content) => match content.kind {
             MarkupKind::PlainText => {
@@ -349,18 +411,13 @@ fn parse_hover_resp(
                 vec![builder.build()]
             }
             MarkupKind::Markdown => {
-                vec![parse_hover_markdown(syntax, &content.value, config, themes)]
+                vec![parse_hover_markdown(syntax, &content.value, config)]
             }
         },
     }
 }
 
-fn add_attribute_for_tag(
-    tag: &Tag,
-    mut attrs: AttributesAdder,
-    config: &EditorConfig,
-    themes: &Themes,
-) {
+fn add_attribute_for_tag(tag: &Tag, mut attrs: AttributesAdder, config: &Config) {
     use pulldown_cmark::HeadingLevel;
     match tag {
         Tag::Heading(level, _, _) => {
@@ -374,21 +431,20 @@ fn add_attribute_for_tag(
                 HeadingLevel::H5 => 0.83,
                 HeadingLevel::H6 => 0.75,
             };
-            let font_size = font_scale * config.font_size as f64;
+            let font_size = font_scale * config.ui.font_size() as f64;
             attrs.size(font_size).weight(FontWeight::BOLD);
         }
         Tag::BlockQuote => {
             attrs.style(FontStyle::Italic).text_color(
-                themes
-                    .color(LapceTheme::MARKDOWN_BLOCKQUOTE)
-                    .cloned()
-                    .unwrap(),
+                config
+                    .get_color_unchecked(LapceTheme::MARKDOWN_BLOCKQUOTE)
+                    .clone(),
             );
         }
         // TODO: We could use the language paired with treesitter to highlight the code
         // within code blocks.
         Tag::CodeBlock(_) => {
-            attrs.font_family(config.font_family());
+            attrs.font_family(config.editor.font_family());
         }
         Tag::Emphasis => {
             attrs.style(FontStyle::Italic);
@@ -399,9 +455,9 @@ fn add_attribute_for_tag(
         // TODO: Strikethrough support
         Tag::Link(_link_type, _target, _title) => {
             // TODO: Link support
-            attrs
-                .underline(true)
-                .text_color(themes.color(LapceTheme::EDITOR_LINK).cloned().unwrap());
+            attrs.underline(true).text_color(
+                config.get_color_unchecked(LapceTheme::EDITOR_LINK).clone(),
+            );
         }
         // All other tags are currently ignored
         _ => {}

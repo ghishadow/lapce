@@ -7,8 +7,8 @@ use anyhow::Result;
 use druid::piet::{PietTextLayout, Text, TextLayout, TextLayoutBuilder};
 use druid::{Command, KbKey};
 use druid::{
-    Env, EventCtx, ExtEventSink, FontFamily, KeyEvent, Modifiers, PaintCtx, Point,
-    Rect, RenderContext, Size, Target,
+    Env, EventCtx, ExtEventSink, KeyEvent, Modifiers, PaintCtx, Point, Rect,
+    RenderContext, Size, Target,
 };
 use fuzzy_matcher::skim::SkimMatcherV2;
 use fuzzy_matcher::FuzzyMatcher;
@@ -53,7 +53,7 @@ pub fn paint_key(
     let text_layout = ctx
         .text()
         .new_text_layout(text.to_string())
-        .font(FontFamily::SYSTEM_UI, 13.0)
+        .font(config.ui.font_family(), config.ui.font_size() as f64)
         .text_color(
             config
                 .get_color_unchecked(LapceTheme::EDITOR_FOREGROUND)
@@ -135,6 +135,9 @@ pub trait KeyPressFocus {
         env: &Env,
     ) -> CommandExecuted;
     fn expect_char(&self) -> bool {
+        false
+    }
+    fn focus_only(&self) -> bool {
         false
     }
     fn receive_char(&mut self, ctx: &mut EventCtx, c: &str);
@@ -223,11 +226,13 @@ impl KeyPressData {
         if let Some(cmd) = self.commands.get(command) {
             match cmd.kind {
                 CommandKind::Workbench(_) => {
-                    ctx.submit_command(Command::new(
-                        LAPCE_COMMAND,
-                        cmd.clone(),
-                        Target::Auto,
-                    ));
+                    if !focus.focus_only() {
+                        ctx.submit_command(Command::new(
+                            LAPCE_COMMAND,
+                            cmd.clone(),
+                            Target::Auto,
+                        ));
+                    }
                     CommandExecuted::Yes
                 }
                 CommandKind::Move(_)
@@ -273,7 +278,12 @@ impl KeyPressData {
     }
 
     fn get_key_modifiers(key_event: &KeyEvent) -> Modifiers {
-        let mut mods = key_event.mods;
+        // We only care about some modifiers
+        let mut mods = (Modifiers::ALT
+            | Modifiers::CONTROL
+            | Modifiers::SHIFT
+            | Modifiers::META)
+            & key_event.mods;
 
         if matches!(key_event.key, KbKey::Shift | KbKey::Character(_)) {
             mods.set(Modifiers::SHIFT, false);

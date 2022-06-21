@@ -3,9 +3,9 @@ use std::sync::Arc;
 use druid::{
     kurbo::BezPath,
     piet::{Text, TextLayout as PietTextLayout, TextLayoutBuilder},
-    BoxConstraints, Color, Command, Env, Event, EventCtx, FontFamily, LayoutCtx,
-    LifeCycle, LifeCycleCtx, PaintCtx, Point, RenderContext, Size, Target,
-    UpdateCtx, Widget, WidgetExt, WidgetId,
+    BoxConstraints, Color, Command, Env, Event, EventCtx, LayoutCtx, LifeCycle,
+    LifeCycleCtx, PaintCtx, Point, RenderContext, Size, Target, UpdateCtx, Widget,
+    WidgetExt, WidgetId,
 };
 use lapce_data::{
     command::{LapceUICommand, LAPCE_UI_COMMAND},
@@ -17,11 +17,8 @@ use lapce_rpc::source_control::FileDiff;
 use crate::{
     editor::view::LapceEditorView,
     panel::{LapcePanel, PanelHeaderKind},
-    svg::{file_svg_new, get_svg},
+    svg::{file_svg, get_svg},
 };
-
-pub const SOURCE_CONTROL_BUFFER: &str = "[Source Control Buffer]";
-pub const SEARCH_BUFFER: &str = "[Search Buffer]";
 
 pub fn new_source_control_panel(data: &LapceTabData) -> LapcePanel {
     let editor_data = data
@@ -29,18 +26,19 @@ pub fn new_source_control_panel(data: &LapceTabData) -> LapcePanel {
         .editors
         .get(&data.source_control.editor_view_id)
         .unwrap();
-    let input = LapceEditorView::new(editor_data.view_id, None)
-        .hide_header()
-        .hide_gutter()
-        .set_placeholder("Commit Message".to_string())
-        .padding((15.0, 15.0));
+    let input =
+        LapceEditorView::new(editor_data.view_id, editor_data.editor_id, None)
+            .hide_header()
+            .hide_gutter()
+            .set_placeholder("Commit Message".to_string())
+            .padding((15.0, 15.0));
     let content = SourceControlFileList::new(data.source_control.file_list_id);
     LapcePanel::new(
         PanelKind::SourceControl,
         data.source_control.widget_id,
         data.source_control.split_id,
         data.source_control.split_direction,
-        PanelHeaderKind::Simple("Source Control".to_string()),
+        PanelHeaderKind::Simple("Source Control".into()),
         vec![
             (
                 editor_data.view_id,
@@ -50,7 +48,7 @@ pub fn new_source_control_panel(data: &LapceTabData) -> LapcePanel {
             ),
             (
                 data.source_control.file_list_id,
-                PanelHeaderKind::Simple("Changes".to_string()),
+                PanelHeaderKind::Simple("Changes".into()),
                 content.boxed(),
                 None,
             ),
@@ -58,7 +56,7 @@ pub fn new_source_control_panel(data: &LapceTabData) -> LapcePanel {
     )
 }
 
-pub struct SourceControlFileList {
+struct SourceControlFileList {
     widget_id: WidgetId,
     mouse_down: Option<usize>,
     line_height: f64,
@@ -258,7 +256,7 @@ impl Widget<LapceTabData> for SourceControlFileList {
                     ctx.stroke(path, &Color::rgb8(0, 0, 0), 2.0);
                 }
             }
-            let svg = file_svg_new(&path);
+            let svg = file_svg(&path);
             let width = 13.0;
             let height = 13.0;
             let rect = Size::new(width, height).to_rect().with_origin(Point::new(
@@ -276,7 +274,10 @@ impl Widget<LapceTabData> for SourceControlFileList {
             let text_layout = ctx
                 .text()
                 .new_text_layout(file_name)
-                .font(FontFamily::SYSTEM_UI, 13.0)
+                .font(
+                    data.config.ui.font_family(),
+                    data.config.ui.font_size() as f64,
+                )
                 .text_color(
                     data.config
                         .get_color_unchecked(LapceTheme::EDITOR_FOREGROUND)
@@ -302,7 +303,10 @@ impl Widget<LapceTabData> for SourceControlFileList {
                 let text_layout = ctx
                     .text()
                     .new_text_layout(folder)
-                    .font(FontFamily::SYSTEM_UI, 13.0)
+                    .font(
+                        data.config.ui.font_family(),
+                        data.config.ui.font_size() as f64,
+                    )
                     .text_color(
                         data.config
                             .get_color_unchecked(LapceTheme::EDITOR_DIM)

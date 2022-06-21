@@ -18,7 +18,6 @@ pub struct Buffer {
     pub rope: Rope,
     pub path: PathBuf,
     pub rev: u64,
-    pub dirty: bool,
     sender: Sender<(BufferId, u64)>,
     pub mod_time: Option<SystemTime>,
 }
@@ -29,11 +28,12 @@ impl Buffer {
         path: PathBuf,
         sender: Sender<(BufferId, u64)>,
     ) -> Buffer {
-        let rope = if let Ok(rope) = load_file(&path) {
+        let rope = if let Ok(rope) = load_rope(&path) {
             rope
         } else {
             Rope::from("")
         };
+        let rev = if rope.is_empty() { 0 } else { 1 };
         let language_id = language_id_from_path(&path).unwrap_or("").to_string();
         let mod_time = get_mod_time(&path);
         Buffer {
@@ -41,9 +41,8 @@ impl Buffer {
             rope,
             path,
             language_id,
-            rev: 0,
+            rev,
             sender,
-            dirty: false,
             mod_time,
         }
     }
@@ -52,7 +51,6 @@ impl Buffer {
         if self.rev != rev {
             return Err(anyhow!("not the right rev"));
         }
-        self.dirty = false;
         let tmp_extension = self.path.extension().map_or_else(
             || OsString::from("swp"),
             |ext| {
@@ -67,21 +65,15 @@ impl Buffer {
         for chunk in self.rope.iter_chunks(..self.rope.len()) {
             f.write_all(chunk.as_bytes())?;
         }
+
+        if let Ok(metadata) = fs::metadata(&self.path) {
+            let perm = metadata.permissions();
+            fs::set_permissions(tmp_path, perm)?;
+        }
+
         fs::rename(tmp_path, &self.path)?;
         self.mod_time = get_mod_time(&self.path);
         Ok(())
-    }
-
-    pub fn reload(&mut self) {
-        let rope = if let Ok(rope) = load_file(&self.path) {
-            rope
-        } else {
-            Rope::from("")
-        };
-
-        self.rope = rope;
-        self.rev += 1;
-        let _ = self.sender.send((self.id, self.rev));
     }
 
     pub fn update(
@@ -93,7 +85,6 @@ impl Buffer {
             return None;
         }
         self.rev += 1;
-        self.dirty = true;
         let content_change = get_document_content_changes(delta, self);
         self.rope = delta.apply(&self.rope);
         let content_change = match content_change {
@@ -146,7 +137,14 @@ impl Buffer {
     }
 }
 
-fn load_file(path: &Path) -> Result<Rope> {
+pub fn load_file(path: &Path) -> Result<String> {
+    let mut f = File::open(path)?;
+    let mut bytes = Vec::new();
+    f.read_to_end(&mut bytes)?;
+    Ok(std::str::from_utf8(&bytes)?.to_string())
+}
+
+fn load_rope(path: &Path) -> Result<Rope> {
     let mut f = File::open(path)?;
     let mut bytes = Vec::new();
     f.read_to_end(&mut bytes)?;

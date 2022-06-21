@@ -1,13 +1,9 @@
-use std::{
-    collections::HashMap,
-    path::{Path, PathBuf},
-    sync::Arc,
-};
+use std::{collections::HashMap, path::PathBuf, sync::Arc};
 
 use druid::{
     kurbo::Line,
     piet::{Svg, Text, TextLayout, TextLayoutBuilder},
-    BoxConstraints, Command, Env, Event, EventCtx, FontFamily, LayoutCtx, LifeCycle,
+    BoxConstraints, Command, Env, Event, EventCtx, LayoutCtx, LifeCycle,
     LifeCycleCtx, MouseEvent, PaintCtx, Point, Rect, RenderContext, Size, Target,
     UpdateCtx, Widget, WidgetExt, WidgetId, WidgetPod,
 };
@@ -15,141 +11,17 @@ use lapce_data::{
     command::{LapceUICommand, LAPCE_UI_COMMAND},
     config::{Config, LapceTheme},
     data::LapceTabData,
+    picker::FilePickerData,
 };
 use lapce_rpc::file::FileNodeItem;
 
 use crate::{
     editor::view::LapceEditorView,
     explorer::{get_item_children, get_item_children_mut},
-    scroll::LapceScrollNew,
-    svg::{file_svg_new, get_svg},
+    scroll::LapceScroll,
+    svg::{file_svg, get_svg},
     tab::LapceButton,
 };
-
-#[derive(Clone)]
-pub struct FilePickerData {
-    pub widget_id: WidgetId,
-    pub editor_view_id: WidgetId,
-    pub active: bool,
-    root: FileNodeItem,
-    pub home: PathBuf,
-    pub pwd: PathBuf,
-}
-
-impl FilePickerData {
-    pub fn new() -> Self {
-        let root = FileNodeItem {
-            path_buf: PathBuf::from("/"),
-            is_dir: true,
-            read: false,
-            open: false,
-            children: HashMap::new(),
-            children_open_count: 0,
-        };
-        let home = PathBuf::from("/");
-        let pwd = PathBuf::from("/");
-        Self {
-            widget_id: WidgetId::next(),
-            editor_view_id: WidgetId::next(),
-            active: false,
-            root,
-            home,
-            pwd,
-        }
-    }
-
-    pub fn set_item_children(
-        &mut self,
-        path: &Path,
-        children: HashMap<PathBuf, FileNodeItem>,
-    ) {
-        if let Some(node) = self.get_file_node_mut(path) {
-            node.open = true;
-            node.read = true;
-            node.children = children;
-        }
-
-        for p in path.ancestors() {
-            self.update_node_count(&PathBuf::from(p));
-        }
-    }
-
-    pub fn init_home(&mut self, home: &Path) {
-        self.home = home.to_path_buf();
-        let mut current_file_node = FileNodeItem {
-            path_buf: home.to_path_buf(),
-            is_dir: true,
-            read: false,
-            open: false,
-            children: HashMap::new(),
-            children_open_count: 0,
-        };
-        let mut current_path = home.to_path_buf();
-
-        let mut ancestors = home.ancestors();
-        ancestors.next();
-
-        for p in ancestors {
-            let mut file_node = FileNodeItem {
-                path_buf: PathBuf::from(p),
-                is_dir: true,
-                read: false,
-                open: true,
-                children: HashMap::new(),
-                children_open_count: 0,
-            };
-            file_node
-                .children
-                .insert(current_path.clone(), current_file_node.clone());
-            current_file_node = file_node;
-            current_path = PathBuf::from(p);
-        }
-        self.root = current_file_node;
-        self.pwd = home.to_path_buf();
-    }
-
-    pub fn get_file_node_mut(&mut self, path: &Path) -> Option<&mut FileNodeItem> {
-        let mut node = Some(&mut self.root);
-
-        let ancestors = path.ancestors().collect::<Vec<&Path>>();
-        for p in ancestors[..ancestors.len() - 1].iter().rev() {
-            node = Some(node?.children.get_mut(&PathBuf::from(p))?);
-        }
-        node
-    }
-
-    pub fn get_file_node(&self, path: &Path) -> Option<&FileNodeItem> {
-        let mut node = Some(&self.root);
-
-        let ancestors = path.ancestors().collect::<Vec<&Path>>();
-        for p in ancestors[..ancestors.len() - 1].iter().rev() {
-            node = Some(node?.children.get(&PathBuf::from(p))?);
-        }
-        node
-    }
-
-    pub fn update_node_count(&mut self, path: &Path) -> Option<()> {
-        let node = self.get_file_node_mut(path)?;
-        if node.is_dir {
-            if node.open {
-                node.children_open_count = node
-                    .children
-                    .iter()
-                    .map(|(_, item)| item.children_open_count + 1)
-                    .sum::<usize>();
-            } else {
-                node.children_open_count = 0;
-            }
-        }
-        None
-    }
-}
-
-impl Default for FilePickerData {
-    fn default() -> Self {
-        Self::new()
-    }
-}
 
 pub struct FilePicker {
     widget_id: WidgetId,
@@ -161,7 +33,7 @@ pub struct FilePicker {
 impl FilePicker {
     pub fn new(data: &LapceTabData) -> Self {
         let pwd = FilePickerPwd::new(data);
-        let explorer = LapceScrollNew::new(FilePickerExplorer::new());
+        let explorer = LapceScroll::new(FilePickerExplorer::new());
         let control = FilePickerControl::new();
         Self {
             widget_id: data.picker.widget_id,
@@ -184,11 +56,9 @@ impl Widget<LapceTabData> for FilePicker {
         data: &mut LapceTabData,
         env: &Env,
     ) {
-        if data.picker.active {
-            self.pwd.event(ctx, event, data, env);
-            self.explorer.event(ctx, event, data, env);
-            self.control.event(ctx, event, data, env);
-        }
+        self.pwd.event(ctx, event, data, env);
+        self.explorer.event(ctx, event, data, env);
+        self.control.event(ctx, event, data, env);
     }
 
     fn lifecycle(
@@ -261,13 +131,21 @@ impl Widget<LapceTabData> for FilePicker {
 
         let rect = ctx.size().to_rect();
 
-        let shadow_width = 5.0;
-        ctx.blurred_rect(
-            rect,
-            shadow_width,
-            data.config
-                .get_color_unchecked(LapceTheme::LAPCE_DROPDOWN_SHADOW),
-        );
+        let shadow_width = data.config.ui.drop_shadow_width() as f64;
+        if shadow_width > 0.0 {
+            ctx.blurred_rect(
+                rect,
+                shadow_width,
+                data.config
+                    .get_color_unchecked(LapceTheme::LAPCE_DROPDOWN_SHADOW),
+            );
+        } else {
+            ctx.stroke(
+                rect.inflate(0.5, 0.5),
+                data.config.get_color_unchecked(LapceTheme::LAPCE_BORDER),
+                1.0,
+            );
+        }
 
         ctx.fill(
             rect,
@@ -281,16 +159,17 @@ impl Widget<LapceTabData> for FilePicker {
     }
 }
 
-pub struct FilePickerPwd {
+struct FilePickerPwd {
     icons: Vec<(Rect, Svg)>,
     input: WidgetPod<LapceTabData, Box<dyn Widget<LapceTabData>>>,
 }
 
 impl FilePickerPwd {
     pub fn new(data: &LapceTabData) -> Self {
-        let input = LapceEditorView::new(data.picker.editor_view_id, None)
-            .hide_header()
-            .hide_gutter();
+        let input =
+            LapceEditorView::new(data.picker.editor_view_id, WidgetId::next(), None)
+                .hide_header()
+                .hide_gutter();
         Self {
             icons: Vec::new(),
             input: WidgetPod::new(input.boxed()),
@@ -438,7 +317,7 @@ impl Widget<LapceTabData> for FilePickerPwd {
     }
 }
 
-pub struct FilePickerExplorer {
+struct FilePickerExplorer {
     toggle_rects: HashMap<usize, Rect>,
     last_left_click: Option<(usize, std::time::Instant)>,
     line_height: f64,
@@ -464,92 +343,42 @@ impl FilePickerExplorer {
         let pwd = picker.pwd.clone();
         let index =
             ((mouse_event.pos.y + self.line_height) / self.line_height) as usize;
-        if let Some(item) = picker.get_file_node_mut(&pwd) {
+        if let Some(item) = picker.root.get_file_node_mut(&pwd) {
             let (_, node) = get_item_children_mut(0, index, item);
             if let Some(node) = node {
                 if node.is_dir {
-                    let mut clicked_toogle = false;
+                    let mut clicked_toggle = false;
                     if let Some(rect) = self.toggle_rects.get(&index) {
                         if rect.contains(mouse_event.pos) {
-                            clicked_toogle = true;
+                            clicked_toggle = true;
                             if node.read {
                                 node.open = !node.open;
                             } else {
                                 let tab_id = data.id;
-                                let path = node.path_buf.clone();
                                 let event_sink = ctx.get_external_handle();
-                                data.proxy.read_dir(
+                                FilePickerData::read_dir(
                                     &node.path_buf,
-                                    Box::new(move |result| {
-                                        if let Ok(res) = result {
-                                            let resp: Result<
-                                                Vec<FileNodeItem>,
-                                                serde_json::Error,
-                                            > = serde_json::from_value(res);
-                                            if let Ok(items) = resp {
-                                                let _ = event_sink.submit_command(
-                                                    LAPCE_UI_COMMAND,
-                                                    LapceUICommand::UpdatePickerItems(
-                                                        path,
-                                                        items
-                                                            .iter()
-                                                            .map(|item| {
-                                                                (
-                                                                    item.path_buf
-                                                                        .clone(),
-                                                                    item.clone(),
-                                                                )
-                                                            })
-                                                            .collect(),
-                                                    ),
-                                                    Target::Widget(tab_id),
-                                                );
-                                            }
-                                        }
-                                    }),
+                                    tab_id,
+                                    &data.proxy,
+                                    event_sink,
                                 );
                             }
                         }
                     }
                     let mut last_left_click =
                         Some((index, std::time::Instant::now()));
-                    if !clicked_toogle {
+                    if !clicked_toggle {
                         if let Some((i, t)) = self.last_left_click.as_ref() {
                             if *i == index && t.elapsed().as_millis() < 500 {
                                 // double click
                                 self.last_left_click = None;
                                 let tab_id = data.id;
-                                let path = node.path_buf.clone();
                                 let event_sink = ctx.get_external_handle();
-                                data.proxy.read_dir(
+                                FilePickerData::read_dir(
                                     &node.path_buf,
-                                    Box::new(move |result| {
-                                        if let Ok(res) = result {
-                                            let resp: Result<
-                                                Vec<FileNodeItem>,
-                                                serde_json::Error,
-                                            > = serde_json::from_value(res);
-                                            if let Ok(items) = resp {
-                                                let _ = event_sink.submit_command(
-                                                    LAPCE_UI_COMMAND,
-                                                    LapceUICommand::UpdatePickerItems(
-                                                        path,
-                                                        items
-                                                            .iter()
-                                                            .map(|item| {
-                                                                (
-                                                                    item.path_buf
-                                                                        .clone(),
-                                                                    item.clone(),
-                                                                )
-                                                            })
-                                                            .collect(),
-                                                    ),
-                                                    Target::Widget(tab_id),
-                                                );
-                                            }
-                                        }
-                                    }),
+                                    tab_id,
+                                    &data.proxy,
+                                    event_sink,
                                 );
                                 let pwd = node.path_buf.clone();
                                 picker.index = 0;
@@ -578,7 +407,7 @@ impl FilePickerExplorer {
                 }
                 let path = node.path_buf.clone();
                 for p in path.ancestors() {
-                    picker.update_node_count(&PathBuf::from(p));
+                    picker.root.update_node_count(p);
                 }
                 picker.index = index;
             }
@@ -611,7 +440,7 @@ impl Widget<LapceTabData> for FilePickerExplorer {
                 let index = ((mouse_event.pos.y + self.line_height)
                     / self.line_height) as usize;
                 ctx.request_paint();
-                if let Some(item) = picker.get_file_node_mut(&pwd) {
+                if let Some(item) = picker.root.get_file_node_mut(&pwd) {
                     let (_, node) = get_item_children(0, index, item);
                     if let Some(_node) = node {
                         ctx.set_cursor(&druid::Cursor::Pointer);
@@ -660,12 +489,12 @@ impl Widget<LapceTabData> for FilePickerExplorer {
         data: &LapceTabData,
         _env: &Env,
     ) -> Size {
-        let height = if let Some(item) = data.picker.get_file_node(&data.picker.pwd)
-        {
-            item.children_open_count as f64 * self.line_height
-        } else {
-            bc.max().height
-        };
+        let height =
+            if let Some(item) = data.picker.root.get_file_node(&data.picker.pwd) {
+                item.children_open_count as f64 * self.line_height
+            } else {
+                bc.max().height
+            };
         Size::new(bc.max().width, height)
     }
 
@@ -680,7 +509,7 @@ impl Widget<LapceTabData> for FilePickerExplorer {
 
         self.toggle_rects.clear();
 
-        if let Some(item) = data.picker.get_file_node(&data.picker.pwd) {
+        if let Some(item) = data.picker.root.get_file_node(&data.picker.pwd) {
             let mut i = 0;
             for item in item.sorted_children() {
                 i = paint_file_node_item_by_index(
@@ -779,7 +608,7 @@ pub fn paint_file_node_item_by_index(
                 .with_origin(Point::new(1.0 + 16.0 + padding, svg_y));
             ctx.draw_svg(&svg, rect, None);
         } else {
-            let svg = file_svg_new(&item.path_buf);
+            let svg = file_svg(&item.path_buf);
             let rect = Size::new(svg_size, svg_size)
                 .to_rect()
                 .with_origin(Point::new(1.0 + 16.0 + padding, svg_y));
@@ -795,7 +624,7 @@ pub fn paint_file_node_item_by_index(
                     .unwrap()
                     .to_string(),
             )
-            .font(FontFamily::SYSTEM_UI, 13.0)
+            .font(config.ui.font_family(), config.ui.font_size() as f64)
             .text_color(
                 config
                     .get_color_unchecked(LapceTheme::EDITOR_FOREGROUND)
@@ -836,7 +665,7 @@ pub fn paint_file_node_item_by_index(
     i
 }
 
-pub struct FilePickerControl {
+struct FilePickerControl {
     buttons: Vec<LapceButton>,
 }
 
@@ -869,7 +698,7 @@ impl FilePickerControl {
                 match command {
                     LapceUICommand::SetWorkspace(workspace) => {
                         if let Some(item) =
-                            data.picker.get_file_node(&data.picker.pwd)
+                            data.picker.root.get_file_node(&data.picker.pwd)
                         {
                             let (_, node) =
                                 get_item_children(0, data.picker.index, item);
@@ -973,7 +802,10 @@ impl Widget<LapceTabData> for FilePickerControl {
         let text_layout = ctx
             .text()
             .new_text_layout("Open")
-            .font(FontFamily::SYSTEM_UI, 13.0)
+            .font(
+                data.config.ui.font_family(),
+                data.config.ui.font_size() as f64,
+            )
             .text_color(
                 data.config
                     .get_color_unchecked(LapceTheme::EDITOR_FOREGROUND)
@@ -1000,7 +832,10 @@ impl Widget<LapceTabData> for FilePickerControl {
         let text_layout = ctx
             .text()
             .new_text_layout("Cancel")
-            .font(FontFamily::SYSTEM_UI, 13.0)
+            .font(
+                data.config.ui.font_family(),
+                data.config.ui.font_size() as f64,
+            )
             .text_color(
                 data.config
                     .get_color_unchecked(LapceTheme::EDITOR_FOREGROUND)

@@ -1,27 +1,23 @@
 use std::sync::Arc;
 
 use alacritty_terminal::{
-    ansi,
     grid::Dimensions,
     index::{Direction, Side},
-    term::{cell::Flags, search::RegexSearch, SizeInfo},
-    Term,
+    term::{cell::Flags, search::RegexSearch},
 };
 use druid::{
     piet::{Text, TextAttribute, TextLayout, TextLayoutBuilder},
-    BoxConstraints, Command, Data, Env, Event, EventCtx, ExtEventSink, FontFamily,
-    FontWeight, LayoutCtx, LifeCycle, LifeCycleCtx, MouseEvent, PaintCtx, Point,
-    Rect, RenderContext, Size, Target, UpdateCtx, Widget, WidgetExt, WidgetId,
-    WidgetPod,
+    BoxConstraints, Command, Data, Env, Event, EventCtx, FontWeight, LayoutCtx,
+    LifeCycle, LifeCycleCtx, MouseEvent, PaintCtx, Point, Rect, RenderContext, Size,
+    Target, UpdateCtx, Widget, WidgetExt, WidgetId, WidgetPod,
 };
 use lapce_core::mode::Mode;
 use lapce_data::{
     command::{LapceUICommand, LAPCE_UI_COMMAND},
     config::LapceTheme,
     data::{FocusArea, LapceTabData, PanelKind},
-    proxy::LapceProxy,
     split::SplitDirection,
-    terminal::{EventProxy, LapceTerminalData, LapceTerminalViewData},
+    terminal::{LapceTerminalData, LapceTerminalViewData},
 };
 use lapce_rpc::terminal::TermId;
 use unicode_width::UnicodeWidthChar;
@@ -29,64 +25,23 @@ use unicode_width::UnicodeWidthChar;
 use crate::{
     panel::{LapcePanel, PanelHeaderKind},
     scroll::LapcePadding,
-    split::LapceSplitNew,
+    split::LapceSplit,
     svg::get_svg,
     tab::LapceIcon,
 };
 
 pub type TermConfig = alacritty_terminal::config::Config;
 
-pub struct RawTerminal {
-    pub parser: ansi::Processor,
-    pub term: Term<EventProxy>,
-    pub scroll_delta: f64,
-}
-
-impl RawTerminal {
-    pub fn update_content(&mut self, content: &str) {
-        if let Ok(content) = base64::decode(content) {
-            for byte in content {
-                self.parser.advance(&mut self.term, byte);
-            }
-        }
-    }
-}
-
-impl RawTerminal {
-    pub fn new(
-        term_id: TermId,
-        proxy: Arc<LapceProxy>,
-        event_sink: ExtEventSink,
-    ) -> Self {
-        let config = TermConfig::default();
-        let size = SizeInfo::new(50.0, 30.0, 1.0, 1.0, 0.0, 0.0, true);
-        let event_proxy = EventProxy {
-            proxy,
-            event_sink,
-            term_id,
-        };
-
-        let term = Term::new(&config, size, event_proxy);
-        let parser = ansi::Processor::new();
-
-        Self {
-            parser,
-            term,
-            scroll_delta: 0.0,
-        }
-    }
-}
-
 /// This struct represents the main body of the terminal, i.e. the part
 /// where the shell is presented.
 pub struct TerminalPanel {
     widget_id: WidgetId,
-    split: WidgetPod<LapceTabData, LapceSplitNew>,
+    split: WidgetPod<LapceTabData, LapceSplit>,
 }
 
 impl TerminalPanel {
     pub fn new(data: &LapceTabData) -> Self {
-        let split = LapceSplitNew::new(data.terminal.split_id);
+        let split = LapceSplit::new(data.terminal.split_id);
         Self {
             widget_id: data.terminal.widget_id,
             split: WidgetPod::new(split),
@@ -100,7 +55,7 @@ impl TerminalPanel {
             data.terminal.widget_id,
             split_id,
             SplitDirection::Vertical,
-            PanelHeaderKind::Simple("Terminal".to_string()),
+            PanelHeaderKind::Simple("Terminal".into()),
             vec![(
                 split_id,
                 PanelHeaderKind::None,
@@ -276,17 +231,19 @@ impl Widget<LapceTabData> for LapceTerminalView {
     }
 
     fn paint(&mut self, ctx: &mut PaintCtx, data: &LapceTabData, env: &Env) {
-        let shadow_width = 5.0;
         let self_rect = ctx.size().to_rect();
         ctx.with_save(|ctx| {
             ctx.clip(self_rect.inflate(0.0, 50.0));
             let rect = self.header.layout_rect();
-            ctx.blurred_rect(
-                rect,
-                shadow_width,
-                data.config
-                    .get_color_unchecked(LapceTheme::LAPCE_DROPDOWN_SHADOW),
-            );
+            let shadow_width = data.config.ui.drop_shadow_width() as f64;
+            if shadow_width > 0.0 {
+                ctx.blurred_rect(
+                    rect,
+                    shadow_width,
+                    data.config
+                        .get_color_unchecked(LapceTheme::LAPCE_DROPDOWN_SHADOW),
+                );
+            }
             ctx.fill(
                 rect,
                 data.config
@@ -299,7 +256,7 @@ impl Widget<LapceTabData> for LapceTerminalView {
     }
 }
 
-pub struct LapceTerminalHeader {
+struct LapceTerminalHeader {
     term_id: TermId,
     height: f64,
     icon_size: f64,
@@ -331,7 +288,7 @@ impl LapceTerminalHeader {
         let x =
             self_size.width - ((icons.len() + 1) as f64) * (gap + self.icon_size);
         let icon = LapceIcon {
-            icon: "close.svg".to_string(),
+            icon: "close.svg",
             rect: Size::new(self.icon_size, self.icon_size)
                 .to_rect()
                 .with_origin(Point::new(x, gap)),
@@ -346,7 +303,7 @@ impl LapceTerminalHeader {
         let x =
             self_size.width - ((icons.len() + 1) as f64) * (gap + self.icon_size);
         let icon = LapceIcon {
-            icon: "split-horizontal.svg".to_string(),
+            icon: "split-horizontal.svg",
             rect: Size::new(self.icon_size, self.icon_size)
                 .to_rect()
                 .with_origin(Point::new(x, gap)),
@@ -446,8 +403,8 @@ impl Widget<LapceTabData> for LapceTerminalHeader {
         ctx.with_save(|ctx| {
             ctx.clip(clip_rect);
             let svg = get_svg("terminal.svg").unwrap();
-            let width = data.config.editor.font_size as f64;
-            let height = data.config.editor.font_size as f64;
+            let width = data.config.terminal_font_size() as f64;
+            let height = data.config.terminal_font_size() as f64;
             let rect = Size::new(width, height).to_rect().with_origin(Point::new(
                 (self.height - width) / 2.0,
                 (self.height - height) / 2.0,
@@ -465,7 +422,10 @@ impl Widget<LapceTabData> for LapceTerminalHeader {
             let text_layout = ctx
                 .text()
                 .new_text_layout(term.title.clone())
-                .font(FontFamily::SYSTEM_UI, data.config.editor.font_size as f64)
+                .font(
+                    data.config.ui.font_family(),
+                    data.config.ui.font_size() as f64,
+                )
                 .text_color(
                     data.config
                         .get_color_unchecked(LapceTheme::EDITOR_FOREGROUND)
@@ -486,7 +446,7 @@ impl Widget<LapceTabData> for LapceTerminalHeader {
                             .get_color_unchecked(LapceTheme::EDITOR_CURRENT_LINE),
                     );
                 }
-                if let Some(svg) = get_svg(&icon.icon) {
+                if let Some(svg) = get_svg(icon.icon) {
                     ctx.draw_svg(
                         &svg,
                         icon.rect.inflate(-self.icon_padding, -self.icon_padding),
@@ -501,7 +461,7 @@ impl Widget<LapceTabData> for LapceTerminalHeader {
     }
 }
 
-pub struct LapceTerminal {
+struct LapceTerminal {
     term_id: TermId,
     widget_id: WidgetId,
     width: f64,
@@ -527,7 +487,7 @@ impl LapceTerminal {
         for (pos, panel) in data.panels.iter_mut() {
             if panel.widgets.contains(&PanelKind::Terminal) {
                 Arc::make_mut(panel).active = PanelKind::Terminal;
-                data.panel_active = pos.clone();
+                data.panel_active = *pos;
                 break;
             }
         }
@@ -627,7 +587,7 @@ impl Widget<LapceTabData> for LapceTerminal {
             self.width = size.width;
             self.height = size.height;
             let width = data.config.editor_char_width(ctx.text());
-            let line_height = data.config.editor.line_height as f64;
+            let line_height = data.config.terminal_line_height() as f64;
             let width = if width > 0.0 {
                 (self.width / width).floor() as usize
             } else {
@@ -646,7 +606,7 @@ impl Widget<LapceTabData> for LapceTerminal {
     fn paint(&mut self, ctx: &mut PaintCtx, data: &LapceTabData, _env: &Env) {
         let char_size = data.config.editor_text_size(ctx.text(), "W");
         let char_width = char_size.width;
-        let line_height = data.config.editor.line_height as f64;
+        let line_height = data.config.terminal_line_height() as f64;
         let y_shift = (line_height - char_size.height) / 2.0;
 
         let terminal = data.terminal.terminals.get(&self.term_id).unwrap();
@@ -779,8 +739,8 @@ impl Widget<LapceTabData> for LapceTerminal {
                     .text()
                     .new_text_layout(cell.c.to_string())
                     .font(
-                        data.config.editor.font_family(),
-                        data.config.editor.font_size as f64,
+                        data.config.terminal_font_family(),
+                        data.config.terminal_font_size() as f64,
                     )
                     .text_color(fg);
                 if bold {

@@ -34,7 +34,7 @@ pub(crate) struct PluginEnv {
 }
 
 #[derive(Clone)]
-pub(crate) struct PluginNew {
+pub(crate) struct Plugin {
     instance: wasmer::Instance,
     env: PluginEnv,
 }
@@ -42,8 +42,8 @@ pub(crate) struct PluginNew {
 pub struct PluginCatalog {
     id_counter: Counter,
     pub items: HashMap<PluginName, PluginDescription>,
-    plugins: HashMap<PluginName, PluginNew>,
-    store: wasmer::Store,
+    plugins: HashMap<PluginName, Plugin>,
+    store: Store,
 }
 
 impl PluginCatalog {
@@ -52,7 +52,7 @@ impl PluginCatalog {
             id_counter: Counter::new(),
             items: HashMap::new(),
             plugins: HashMap::new(),
-            store: wasmer::Store::default(),
+            store: Store::default(),
         }
     }
 
@@ -86,12 +86,12 @@ impl PluginCatalog {
     ) -> Result<()> {
         let home = home_dir().unwrap();
         let path = home.join(".lapce").join("plugins").join(&plugin.name);
-        let _ = std::fs::remove_dir_all(&path);
+        let _ = fs::remove_dir_all(&path);
 
-        std::fs::create_dir_all(&path)?;
+        fs::create_dir_all(&path)?;
 
         {
-            let mut file = std::fs::OpenOptions::new()
+            let mut file = fs::OpenOptions::new()
                 .create(true)
                 .truncate(true)
                 .write(true)
@@ -99,30 +99,52 @@ impl PluginCatalog {
             file.write_all(&toml::to_vec(&plugin)?)?;
         }
 
-        {
-            let url = format!(
-                "https://raw.githubusercontent.com/{}/master/{}",
-                plugin.repository, plugin.wasm
-            );
-            let mut resp = ureq::get(&url).call()?.into_reader();
-            let mut file = std::fs::OpenOptions::new()
-                .create(true)
-                .truncate(true)
-                .write(true)
-                .open(path.join(&plugin.wasm))?;
-            std::io::copy(&mut resp, &mut file)?;
-        }
-
         let mut plugin = plugin;
-        plugin.dir = Some(path.clone());
-        plugin.wasm = path
-            .join(&plugin.wasm)
-            .to_str()
-            .ok_or_else(|| anyhow!("path can't to string"))?
-            .to_string();
-        let p = self.start_plugin(dispatcher, plugin.clone())?;
-        self.items.insert(plugin.name.clone(), plugin.clone());
-        self.plugins.insert(plugin.name, p);
+        if let Some(wasm) = plugin.wasm.clone() {
+            {
+                let url = format!(
+                    "https://raw.githubusercontent.com/{}/master/{}",
+                    plugin.repository, wasm
+                );
+                let mut resp = reqwest::blocking::get(url)?;
+                let mut file = fs::OpenOptions::new()
+                    .create(true)
+                    .truncate(true)
+                    .write(true)
+                    .open(path.join(&wasm))?;
+                std::io::copy(&mut resp, &mut file)?;
+            }
+
+            plugin.dir = Some(path.clone());
+            plugin.wasm = Some(
+                path.join(&wasm)
+                    .to_str()
+                    .ok_or_else(|| anyhow!("path can't to string"))?
+                    .to_string(),
+            );
+
+            if let Ok(p) = self.start_plugin(dispatcher, plugin.clone()) {
+                self.plugins.insert(plugin.name.clone(), p);
+            }
+        }
+        if let Some(themes) = plugin.themes.as_ref() {
+            for theme in themes {
+                {
+                    let url = format!(
+                        "https://raw.githubusercontent.com/{}/master/{}",
+                        plugin.repository, theme
+                    );
+                    let mut resp = reqwest::blocking::get(url)?;
+                    let mut file = fs::OpenOptions::new()
+                        .create(true)
+                        .truncate(true)
+                        .write(true)
+                        .open(path.join(theme))?;
+                    std::io::copy(&mut resp, &mut file)?;
+                }
+            }
+        }
+        self.items.insert(plugin.name.clone(), plugin);
         Ok(())
     }
 
@@ -138,8 +160,14 @@ impl PluginCatalog {
         &mut self,
         dispatcher: Dispatcher,
         plugin_desc: PluginDescription,
-    ) -> Result<PluginNew> {
-        let module = wasmer::Module::from_file(&self.store, &plugin_desc.wasm)?;
+    ) -> Result<Plugin> {
+        let module = wasmer::Module::from_file(
+            &self.store,
+            plugin_desc
+                .wasm
+                .as_ref()
+                .ok_or_else(|| anyhow!("no wasm in plugin"))?,
+        )?;
 
         let output = Pipe::new();
         let input = Pipe::new();
@@ -157,7 +185,7 @@ impl PluginCatalog {
         };
         let lapce = lapce_exports(&self.store, &plugin_env);
         let instance = wasmer::Instance::new(&module, &lapce.chain_back(wasi))?;
-        let plugin = PluginNew {
+        let plugin = Plugin {
             instance,
             env: plugin_env,
         };
@@ -256,11 +284,8 @@ fn host_handle_notification(plugin_env: &PluginEnv) {
                 );
             }
             PluginNotification::DownloadFile { url, path } => {
-                let mut resp = ureq::get(&url)
-                    .call()
-                    .expect("request failed")
-                    .into_reader();
-                let mut out = std::fs::File::create(
+                let mut resp = reqwest::blocking::get(url).expect("request failed");
+                let mut out = fs::File::create(
                     plugin_env.desc.dir.clone().unwrap().join(path),
                 )
                 .expect("failed to create file");
@@ -270,7 +295,7 @@ fn host_handle_notification(plugin_env: &PluginEnv) {
                 let path = plugin_env.desc.dir.clone().unwrap().join(path);
                 let mut n = 0;
                 loop {
-                    if let Ok(_file) = std::fs::OpenOptions::new()
+                    if let Ok(_file) = fs::OpenOptions::new()
                         .write(true)
                         .create_new(true)
                         .open(&path)
@@ -352,13 +377,30 @@ fn load_plugin(path: &Path) -> Result<PluginDescription> {
     file.read_to_string(&mut contents)?;
     let mut plugin: PluginDescription = toml::from_str(&contents)?;
     plugin.dir = Some(path.parent().unwrap().canonicalize()?);
-    plugin.wasm = path
-        .parent()
-        .unwrap()
-        .join(&plugin.wasm)
-        .canonicalize()?
-        .to_str()
-        .ok_or_else(|| anyhow!("path can't to string"))?
-        .to_string();
+    plugin.wasm = plugin.wasm.as_ref().and_then(|wasm| {
+        Some(
+            path.parent()?
+                .join(wasm)
+                .canonicalize()
+                .ok()?
+                .to_str()?
+                .to_string(),
+        )
+    });
+    plugin.themes = plugin.themes.as_ref().map(|themes| {
+        themes
+            .iter()
+            .filter_map(|theme| {
+                Some(
+                    path.parent()?
+                        .join(theme)
+                        .canonicalize()
+                        .ok()?
+                        .to_str()?
+                        .to_string(),
+                )
+            })
+            .collect()
+    });
     Ok(plugin)
 }

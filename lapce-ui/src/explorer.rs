@@ -3,9 +3,9 @@ use std::{collections::HashMap, path::Path};
 
 use druid::{
     piet::{Text, TextLayout as PietTextLayout, TextLayoutBuilder},
-    BoxConstraints, Command, Cursor, Env, Event, EventCtx, FontFamily, LayoutCtx,
-    LifeCycle, LifeCycleCtx, PaintCtx, Point, Rect, RenderContext, Size, Target,
-    UpdateCtx, Widget, WidgetExt, WidgetId, WidgetPod,
+    BoxConstraints, Command, Cursor, Env, Event, EventCtx, LayoutCtx, LifeCycle,
+    LifeCycleCtx, PaintCtx, Point, Rect, RenderContext, Size, Target, UpdateCtx,
+    Widget, WidgetExt, WidgetId, WidgetPod,
 };
 use lapce_data::{
     command::LapceUICommand,
@@ -19,8 +19,8 @@ use lapce_rpc::file::FileNodeItem;
 
 use crate::{
     panel::{LapcePanel, PanelHeaderKind},
-    scroll::LapceScrollNew,
-    svg::{file_svg_new, get_svg},
+    scroll::LapceScroll,
+    svg::{file_svg, get_svg},
 };
 
 #[allow(clippy::too_many_arguments)]
@@ -97,7 +97,7 @@ pub fn paint_file_node_item(
                 .with_origin(Point::new(1.0 + 16.0 + padding, svg_y));
             ctx.draw_svg(&svg, rect, None);
         } else {
-            let svg = file_svg_new(&item.path_buf);
+            let svg = file_svg(&item.path_buf);
             let rect = Size::new(svg_size, svg_size)
                 .to_rect()
                 .with_origin(Point::new(1.0 + 16.0 + padding, svg_y));
@@ -113,7 +113,7 @@ pub fn paint_file_node_item(
                     .unwrap()
                     .to_string(),
             )
-            .font(FontFamily::SYSTEM_UI, 13.0)
+            .font(config.ui.font_family(), config.ui.font_size() as f64)
             .text_color(
                 config
                     .get_color_unchecked(LapceTheme::EDITOR_FOREGROUND)
@@ -209,7 +209,7 @@ pub struct FileExplorer {
 
 impl FileExplorer {
     pub fn new(data: &FileExplorerData) -> Self {
-        let file_list = LapceScrollNew::new(FileExplorerFileList::new());
+        let file_list = LapceScroll::new(FileExplorerFileList::new());
         Self {
             widget_id: data.widget_id,
             file_list: WidgetPod::new(file_list.boxed()),
@@ -223,7 +223,7 @@ impl FileExplorer {
             data.file_explorer.widget_id,
             split_id,
             SplitDirection::Vertical,
-            PanelHeaderKind::Simple("File Explorer".to_string()),
+            PanelHeaderKind::Simple("File Explorer".into()),
             vec![(
                 split_id,
                 PanelHeaderKind::None,
@@ -285,56 +285,10 @@ impl Widget<LapceTabData> for FileExplorer {
 
     fn paint(&mut self, ctx: &mut PaintCtx, data: &LapceTabData, env: &Env) {
         self.file_list.paint(ctx, data, env);
-
-        //  let line_height = data.config.editor.line_height as f64;
-
-        //  let shadow_width = 5.0;
-        //  let rect = Size::new(ctx.size().width, line_height)
-        //      .to_rect()
-        //      .with_origin(Point::new(0.0, 0.0));
-        //  ctx.blurred_rect(
-        //      rect,
-        //      shadow_width,
-        //      data.config
-        //          .get_color_unchecked(LapceTheme::LAPCE_DROPDOWN_SHADOW),
-        //  );
-        //  ctx.fill(
-        //      rect,
-        //      data.config
-        //          .get_color_unchecked(LapceTheme::PANEL_BACKGROUND),
-        //  );
-
-        //  let dir = data
-        //      .workspace
-        //      .path
-        //      .as_ref()
-        //      .map(|p| {
-        //          let dir = p.file_name().unwrap().to_str().unwrap();
-        //          let dir = match &data.workspace.kind {
-        //              LapceWorkspaceType::Local => dir.to_string(),
-        //              LapceWorkspaceType::RemoteSSH(user, host) => {
-        //                  format!("{} [{}@{}]", dir, user, host)
-        //              }
-        //          };
-        //          dir
-        //      })
-        //      .unwrap_or("Lapce".to_string());
-        //  let text_layout = ctx
-        //      .text()
-        //      .new_text_layout(dir)
-        //      .font(FontFamily::SYSTEM_UI, 13.0)
-        //      .text_color(
-        //          data.config
-        //              .get_color_unchecked(LapceTheme::EDITOR_FOREGROUND)
-        //              .clone(),
-        //      )
-        //      .build()
-        //      .unwrap();
-        //  ctx.draw_text(&text_layout, Point::new(20.0, 4.0));
     }
 }
 
-pub struct FileExplorerFileList {
+struct FileExplorerFileList {
     line_height: f64,
     hovered: Option<usize>,
 }
@@ -411,27 +365,13 @@ impl Widget<LapceTabData> for FileExplorerFileList {
                             node.open = !node.open;
                         } else {
                             let tab_id = data.id;
-                            let path = node.path_buf.clone();
                             let event_sink = ctx.get_external_handle();
-                            data.proxy.read_dir(
+                            FileExplorerData::read_dir(
                                 &node.path_buf,
-                                Box::new(move |result| {
-                                    if let Ok(res) = result {
-                                        let resp: Result<
-                                            Vec<FileNodeItem>,
-                                            serde_json::Error,
-                                        > = serde_json::from_value(res);
-                                        if let Ok(items) = resp {
-                                            let _ = event_sink.submit_command(
-                                                LAPCE_UI_COMMAND,
-                                                LapceUICommand::UpdateExplorerItems(
-                                                    index, path, items,
-                                                ),
-                                                Target::Widget(tab_id),
-                                            );
-                                        }
-                                    }
-                                }),
+                                true,
+                                tab_id,
+                                &data.proxy,
+                                event_sink,
                             );
                         }
                         let path = node.path_buf.clone();

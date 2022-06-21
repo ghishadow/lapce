@@ -59,7 +59,7 @@ key = "alt+I"
 command = "insert_cursor_end_of_line"
 mode = "i"
 
-# --------------------------------- Rich Lanaguage Editing ----------------------------
+# --------------------------------- Rich Language Editing ----------------------------
 
 [[keymaps]]
 key = "F12"
@@ -114,6 +114,11 @@ when = "search_focus"
 key = "ctrl+m"
 command = "list.select"
 when = "list_focus"
+
+[[keymaps]]
+key = "tab"
+command = "list.select"
+when = "completion_focus"
 
 [[keymaps]]
 key = "enter"
@@ -220,7 +225,7 @@ mode = "i"
 [[keymaps]]
 key = "tab"
 command = "insert_tab"
-when = "!in_snippet"
+when = "!in_snippet && !completion_focus"
 mode = "i"
 
 [[keymaps]]
@@ -421,6 +426,16 @@ mode = "nv"
 [[keymaps]]
 key = "z z"
 command = "center_of_window"
+mode = "nv"
+
+[[keymaps]]
+key = "z t"
+command = "top_of_window"
+mode = "nv"
+
+[[keymaps]]
+key = "z b"
+command = "bottom_of_window"
 mode = "nv"
 
 [[keymaps]]

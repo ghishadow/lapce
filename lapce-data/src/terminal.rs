@@ -533,7 +533,7 @@ impl LapceTerminalData {
 
         let local_proxy = proxy.clone();
         let local_raw = raw.clone();
-        let shell = config.lapce.terminal_shell.clone();
+        let shell = config.terminal.shell.clone();
         std::thread::spawn(move || {
             local_proxy.new_terminal(term_id, cwd, shell, local_raw);
         });
@@ -638,6 +638,13 @@ impl LapceTerminalData {
     }
 
     pub fn resolve_key_event(key: &KeyEvent) -> Option<&str> {
+        let mut key = key.clone();
+        key.mods = (Modifiers::ALT
+            | Modifiers::CONTROL
+            | Modifiers::SHIFT
+            | Modifiers::META)
+            & key.mods;
+
         // Generates a `Modifiers` value to check against.
         macro_rules! modifiers {
             (ctrl) => {
@@ -692,9 +699,9 @@ impl LapceTerminalData {
         // Generates ANSI sequences to move the cursor by one position.
         macro_rules! term_sequence {
             // Generate every modifier combination (except meta)
-            ([all], $evt:ident, $pre:literal, $post:literal) => {
+            ([all], $evt:ident, $no_mod:literal, $pre:literal, $post:literal) => {
                 {
-                    term_sequence!([], $evt, $pre, $post);
+                    term_sequence!([], $evt, $no_mod);
                     term_sequence!([shift, alt, ctrl], $evt, $pre, $post);
                     term_sequence!([alt | shift, ctrl | shift, alt | ctrl], $evt, $pre, $post);
                     term_sequence!([alt | ctrl | shift], $evt, $pre, $post);
@@ -702,15 +709,15 @@ impl LapceTerminalData {
                 }
             };
             // No modifiers
-            ([], $evt:ident, $pre:literal, $post:literal) => {
+            ([], $evt:ident, $no_mod:literal) => {
                 if $evt.mods.is_empty() {
-                    return Some(concat!($pre, $post));
+                    return Some($no_mod);
                 }
             };
             // A single modifier combination
             ([$($mod:ident)|+], $evt:ident, $pre:literal, $post:literal) => {
                 if $evt.mods == modifiers!($($mod)|+) {
-                    return Some(concat!($pre, ";", modval!($($mod)|+), $post));
+                    return Some(concat!($pre, modval!($($mod)|+), $post));
                 }
             };
             // Break down multiple modifiers into a series of single combination branches
@@ -779,15 +786,15 @@ impl LapceTerminalData {
             Key::Enter => Some("\r"),
             Key::Escape => Some("\x1b"),
 
-            // The following either expands to `\x1b[1X` or `\x1b[1;NX` where N is a modifier value
-            Key::ArrowUp => term_sequence!([all], key, "\x1b[1", "A"),
-            Key::ArrowDown => term_sequence!([all], key, "\x1b[1", "B"),
-            Key::ArrowRight => term_sequence!([all], key, "\x1b[1", "C"),
-            Key::ArrowLeft => term_sequence!([all], key, "\x1b[1", "D"),
-            Key::Home => term_sequence!([all], key, "\x1b[1", "H"),
-            Key::End => term_sequence!([all], key, "\x1b[1", "F"),
-            Key::Insert => term_sequence!([all], key, "\x1b[2", "~"),
-            Key::Delete => term_sequence!([all], key, "\x1b[3", "~"),
+            // The following either expands to `\x1b[X` or `\x1b[1;NX` where N is a modifier value
+            Key::ArrowUp => term_sequence!([all], key, "\x1b[A", "\x1b[1;", "A"),
+            Key::ArrowDown => term_sequence!([all], key, "\x1b[B", "\x1b[1;", "B"),
+            Key::ArrowRight => term_sequence!([all], key, "\x1b[C", "\x1b[1;", "C"),
+            Key::ArrowLeft => term_sequence!([all], key, "\x1b[D", "\x1b[1;", "D"),
+            Key::Home => term_sequence!([all], key, "\x1bOH", "\x1b[1;", "H"),
+            Key::End => term_sequence!([all], key, "\x1bOF", "\x1b[1;", "F"),
+            Key::Insert => term_sequence!([all], key, "\x1b[2~", "\x1b[2;", "~"),
+            Key::Delete => term_sequence!([all], key, "\x1b[3~", "\x1b[3;", "~"),
             _ => None,
         }
     }
@@ -829,7 +836,7 @@ mod test {
     #[test]
     fn test_arrow_without_modifier() {
         assert_eq!(
-            Some("\x1b[1D"),
+            Some("\x1b[D"),
             LapceTerminalData::resolve_key_event(&KeyEvent::for_test(
                 Modifiers::empty(),
                 KbKey::ArrowLeft

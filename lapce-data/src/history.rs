@@ -26,7 +26,7 @@ use crate::{
 };
 
 #[derive(Clone)]
-pub struct DocumentHisotry {
+pub struct DocumentHistory {
     version: String,
     buffer: Option<Buffer>,
     styles: Arc<Spans<Style>>,
@@ -35,7 +35,7 @@ pub struct DocumentHisotry {
     text_layouts: Rc<RefCell<TextLayoutCache>>,
 }
 
-impl druid::Data for DocumentHisotry {
+impl druid::Data for DocumentHistory {
     fn same(&self, other: &Self) -> bool {
         if !self.changes.same(&other.changes) {
             return false;
@@ -55,7 +55,7 @@ impl druid::Data for DocumentHisotry {
     }
 }
 
-impl DocumentHisotry {
+impl DocumentHistory {
     pub fn new(version: String) -> Self {
         Self {
             version,
@@ -69,7 +69,7 @@ impl DocumentHisotry {
 
     pub fn load_content(&mut self, content: Rope, doc: &Document) {
         let mut buffer = Buffer::new("");
-        buffer.load_content(&content.slice_to_cow(..));
+        buffer.init_content(content);
         self.buffer = Some(buffer);
         self.trigger_update_change(doc);
         self.retrieve_history_styles(doc);
@@ -81,11 +81,7 @@ impl DocumentHisotry {
         line: usize,
         config: &Config,
     ) -> Arc<PietTextLayout> {
-        self.text_layouts.borrow_mut().check_attributes(
-            config.editor.font_size,
-            config.editor.font_family(),
-            config.editor.tab_width,
-        );
+        self.text_layouts.borrow_mut().check_attributes(config.id);
         if self.text_layouts.borrow().layouts.get(&line).is_none() {
             self.text_layouts
                 .borrow_mut()

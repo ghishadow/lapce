@@ -11,10 +11,13 @@ use std::{
 
 use lsp_types::Position;
 use xi_rope::{
-    multiset::Subset, Cursor, Delta, DeltaBuilder, Interval, Rope, RopeDelta,
+    diff::{Diff, LineHashDiff},
+    multiset::Subset,
+    Cursor, Delta, DeltaBuilder, Interval, Rope, RopeDelta,
 };
 
 use crate::{
+    cursor::CursorMode,
     editor::EditType,
     indent::{auto_detect_indent_style, IndentStyle},
     mode::Mode,
@@ -49,8 +52,11 @@ enum Contents {
 
 #[derive(Clone)]
 struct Revision {
+    num: u64,
     max_undo_so_far: usize,
     edit: Contents,
+    cursor_before: Option<CursorMode>,
+    cursor_after: Option<CursorMode>,
 }
 
 #[derive(Debug, Clone)]
@@ -62,9 +68,9 @@ pub struct InvalLines {
 
 #[derive(Clone)]
 pub struct Buffer {
-    rev: u64,
+    rev_counter: u64,
+    pristine_rev_id: u64,
     atomic_rev: Arc<AtomicU64>,
-    dirty: bool,
 
     text: Rope,
     revs: Vec<Revision>,
@@ -75,6 +81,7 @@ pub struct Buffer {
     deletes_from_union: Subset,
     undone_groups: BTreeSet<usize>,
     tombstones: Rope,
+    this_edit_type: EditType,
     last_edit_type: EditType,
 
     indent_style: IndentStyle,
@@ -88,16 +95,19 @@ impl Buffer {
         Self {
             text: Rope::from(text),
 
-            rev: 0,
+            rev_counter: 1,
+            pristine_rev_id: 0,
             atomic_rev: Arc::new(AtomicU64::new(0)),
-            dirty: false,
 
             revs: vec![Revision {
+                num: 0,
                 max_undo_so_far: 0,
                 edit: Contents::Undo {
                     toggled_groups: BTreeSet::new(),
                     deletes_bitxor: Subset::new(0),
                 },
+                cursor_before: None,
+                cursor_after: None,
             }],
             cur_undo: 1,
             undos: BTreeSet::new(),
@@ -107,6 +117,7 @@ impl Buffer {
             undone_groups: BTreeSet::new(),
             tombstones: Rope::default(),
 
+            this_edit_type: EditType::Other,
             last_edit_type: EditType::Other,
             indent_style: IndentStyle::DEFAULT_INDENT,
 
@@ -116,19 +127,47 @@ impl Buffer {
     }
 
     pub fn rev(&self) -> u64 {
-        self.rev
+        self.revs.last().unwrap().num
     }
 
-    pub fn set_rev(&mut self, rev: u64) {
-        self.rev = rev;
+    pub fn set_pristine(&mut self) {
+        self.pristine_rev_id = self.rev()
     }
 
-    pub fn dirty(&self) -> bool {
-        self.dirty
+    pub fn is_pristine(&self) -> bool {
+        self.is_equivalent_revision(self.pristine_rev_id, self.rev())
     }
 
-    pub fn set_dirty(&mut self, dirty: bool) {
-        self.dirty = dirty;
+    pub fn set_cursor_before(&mut self, cursor: CursorMode) {
+        if let Some(rev) = self.revs.last_mut() {
+            rev.cursor_before = Some(cursor);
+        }
+    }
+
+    pub fn set_cursor_after(&mut self, cursor: CursorMode) {
+        if let Some(rev) = self.revs.last_mut() {
+            rev.cursor_after = Some(cursor);
+        }
+    }
+
+    fn is_equivalent_revision(&self, base_rev: u64, other_rev: u64) -> bool {
+        let base_subset = self
+            .find_rev(base_rev)
+            .map(|rev_index| self.deletes_from_cur_union_for_index(rev_index));
+        let other_subset = self
+            .find_rev(other_rev)
+            .map(|rev_index| self.deletes_from_cur_union_for_index(rev_index));
+
+        base_subset.is_some() && base_subset == other_subset
+    }
+
+    fn find_rev(&self, rev_id: u64) -> Option<usize> {
+        self.revs
+            .iter()
+            .enumerate()
+            .rev()
+            .find(|&(_, rev)| rev.num == rev_id)
+            .map(|(i, _)| i)
     }
 
     pub fn atomic_rev(&self) -> Arc<AtomicU64> {
@@ -161,7 +200,7 @@ impl Buffer {
 
     fn update_size(&mut self, inval_lines: &InvalLines) {
         if self.max_len_line >= inval_lines.start_line
-            && self.max_len_line < inval_lines.start_line + inval_lines.inval_count
+            && self.max_len_line <= inval_lines.start_line + inval_lines.inval_count
         {
             let (max_len, max_len_line) = self.get_max_line_len();
             self.max_len = max_len;
@@ -196,40 +235,34 @@ impl Buffer {
         self.offset_of_line(line + 1) - self.offset_of_line(line)
     }
 
-    fn reset_revs(&mut self) {
-        self.text = Rope::from("");
-        self.revs = vec![Revision {
-            max_undo_so_far: 0,
-            edit: Contents::Undo {
-                toggled_groups: BTreeSet::new(),
-                deletes_bitxor: Subset::new(0),
-            },
-        }];
-        self.cur_undo = 1;
-        self.undo_group_id = 1;
-        self.live_undos = vec![0];
-        self.deletes_from_union = Subset::new(0);
-        self.undone_groups = BTreeSet::new();
-        self.tombstones = Rope::default();
+    pub fn init_content(&mut self, content: Rope) {
+        if !content.is_empty() {
+            let delta = Delta::simple_edit(Interval::new(0, 0), content, 0);
+            let (new_rev, new_text, new_tombstones, new_deletes_from_union) =
+                self.mk_new_rev(0, delta.clone());
+            self.apply_edit(
+                &delta,
+                new_rev,
+                new_text,
+                new_tombstones,
+                new_deletes_from_union,
+            );
+        }
+        self.set_pristine();
     }
 
-    pub fn load_content(&mut self, content: &str) {
-        self.reset_revs();
-
-        if !content.is_empty() {
-            let delta =
-                Delta::simple_edit(Interval::new(0, 0), Rope::from(content), 0);
-            let (new_rev, new_text, new_tombstones, new_deletes_from_union) =
-                self.mk_new_rev(0, delta);
-            self.revs.push(new_rev);
-            self.text = new_text;
-            self.tombstones = new_tombstones;
-            self.deletes_from_union = new_deletes_from_union;
+    pub fn reload(
+        &mut self,
+        content: Rope,
+        set_pristine: bool,
+    ) -> (RopeDelta, InvalLines) {
+        let delta = LineHashDiff::compute_delta(&self.text, &content);
+        self.this_edit_type = EditType::Other;
+        let (delta, inval_lines) = self.add_delta(delta);
+        if set_pristine {
+            self.set_pristine();
         }
-
-        let (max_len, max_len_line) = self.get_max_line_len();
-        self.max_len = max_len;
-        self.max_len_line = max_len_line;
+        (delta, inval_lines)
     }
 
     pub fn detect_indent(&mut self, syntax: Option<&Syntax>) {
@@ -243,6 +276,10 @@ impl Buffer {
 
     pub fn indent_unit(&self) -> &'static str {
         self.indent_style.as_str()
+    }
+
+    pub fn reset_edit_type(&mut self) {
+        self.last_edit_type = EditType::Other
     }
 
     pub fn edit(
@@ -271,8 +308,13 @@ impl Buffer {
             builder.replace(start..end, rope);
         }
         let delta = builder.build();
-        let undo_group = self.calculate_undo_group(edit_type);
-        self.last_edit_type = edit_type;
+        self.this_edit_type = edit_type;
+        self.add_delta(delta)
+    }
+
+    fn add_delta(&mut self, delta: RopeDelta) -> (RopeDelta, InvalLines) {
+        let undo_group = self.calculate_undo_group();
+        self.last_edit_type = self.this_edit_type;
 
         let (new_rev, new_text, new_tombstones, new_deletes_from_union) =
             self.mk_new_rev(undo_group, delta.clone());
@@ -296,9 +338,7 @@ impl Buffer {
         new_tombstones: Rope,
         new_deletes_from_union: Subset,
     ) -> InvalLines {
-        self.rev += 1;
-        self.atomic_rev.store(self.rev, atomic::Ordering::Release);
-        self.dirty = true;
+        self.rev_counter += 1;
 
         let (iv, newlen) = delta.summary();
         let old_logical_end_line = self.text.line_of_offset(iv.end) + 1;
@@ -323,9 +363,10 @@ impl Buffer {
         inval_lines
     }
 
-    fn calculate_undo_group(&mut self, edit_type: EditType) -> usize {
+    fn calculate_undo_group(&mut self) -> usize {
         let has_undos = !self.live_undos.is_empty();
-        let is_unbroken_group = !edit_type.breaks_undo_group(self.last_edit_type);
+        let is_unbroken_group =
+            !self.this_edit_type.breaks_undo_group(self.last_edit_type);
 
         if has_undos && is_unbroken_group {
             *self.live_undos.last().unwrap()
@@ -376,19 +417,41 @@ impl Buffer {
         );
 
         let head_rev = &self.revs.last().unwrap();
+        self.atomic_rev
+            .store(self.rev_counter, atomic::Ordering::Release);
         (
             Revision {
+                num: self.rev_counter,
                 max_undo_so_far: std::cmp::max(undo_group, head_rev.max_undo_so_far),
                 edit: Contents::Edit {
                     undo_group,
                     inserts: new_inserts,
                     deletes: new_deletes,
                 },
+                cursor_before: None,
+                cursor_after: None,
             },
             new_text,
             new_tombstones,
             new_deletes_from_union,
         )
+    }
+
+    fn deletes_from_union_for_index(&self, rev_index: usize) -> Cow<Subset> {
+        self.deletes_from_union_before_index(rev_index + 1, true)
+    }
+
+    fn deletes_from_cur_union_for_index(&self, rev_index: usize) -> Cow<Subset> {
+        let mut deletes_from_union = self.deletes_from_union_for_index(rev_index);
+        for rev in &self.revs[rev_index + 1..] {
+            if let Contents::Edit { ref inserts, .. } = rev.edit {
+                if !inserts.is_empty() {
+                    deletes_from_union =
+                        Cow::Owned(deletes_from_union.transform_union(inserts));
+                }
+            }
+        }
+        deletes_from_union
     }
 
     fn deletes_from_union_before_index(
@@ -491,21 +554,60 @@ impl Buffer {
             }
         }
 
+        let cursor_before = self
+            .revs
+            .get(first_candidate)
+            .and_then(|rev| rev.cursor_before.clone());
+
+        let cursor_after = self
+            .revs
+            .get(first_candidate)
+            .and_then(|rev| match &rev.edit {
+                Contents::Edit { undo_group, .. } => Some(undo_group),
+                Contents::Undo { .. } => None,
+            })
+            .and_then(|group| {
+                let mut cursor: Option<&CursorMode> = None;
+                for rev in &self.revs[first_candidate..] {
+                    if let Contents::Edit { ref undo_group, .. } = rev.edit {
+                        if group == undo_group {
+                            cursor = rev.cursor_after.as_ref();
+                        } else {
+                            break;
+                        }
+                    }
+                }
+                cursor.cloned()
+            });
+
         let deletes_bitxor = self.deletes_from_union.bitxor(&deletes_from_union);
         let max_undo_so_far = self.revs.last().unwrap().max_undo_so_far;
+        self.atomic_rev
+            .store(self.rev_counter, atomic::Ordering::Release);
         (
             Revision {
+                num: self.rev_counter,
                 max_undo_so_far,
                 edit: Contents::Undo {
                     toggled_groups,
                     deletes_bitxor,
                 },
+                cursor_before,
+                cursor_after,
             },
             deletes_from_union,
         )
     }
 
-    fn undo(&mut self, groups: BTreeSet<usize>) -> (RopeDelta, InvalLines) {
+    fn undo(
+        &mut self,
+        groups: BTreeSet<usize>,
+    ) -> (
+        RopeDelta,
+        InvalLines,
+        Option<CursorMode>,
+        Option<CursorMode>,
+    ) {
         let (new_rev, new_deletes_from_union) = self.compute_undo(&groups);
         let delta = Delta::synthesize(
             &self.tombstones,
@@ -521,6 +623,9 @@ impl Buffer {
         );
         self.undone_groups = groups;
 
+        let cursor_before = new_rev.cursor_before.clone();
+        let cursor_after = new_rev.cursor_after.clone();
+
         let inval_lines = self.apply_edit(
             &delta,
             new_rev,
@@ -529,26 +634,34 @@ impl Buffer {
             new_deletes_from_union,
         );
 
-        (delta, inval_lines)
+        (delta, inval_lines, cursor_before, cursor_after)
     }
 
-    pub fn do_undo(&mut self) -> Option<(RopeDelta, InvalLines)> {
+    pub fn do_undo(
+        &mut self,
+    ) -> Option<(RopeDelta, InvalLines, Option<CursorMode>)> {
         if self.cur_undo > 1 {
             self.cur_undo -= 1;
             self.undos.insert(self.live_undos[self.cur_undo]);
             self.last_edit_type = EditType::Undo;
-            Some(self.undo(self.undos.clone()))
+            let (delta, inval_lines, cursor_before, _cursor_after) =
+                self.undo(self.undos.clone());
+            Some((delta, inval_lines, cursor_before))
         } else {
             None
         }
     }
 
-    pub fn do_redo(&mut self) -> Option<(RopeDelta, InvalLines)> {
+    pub fn do_redo(
+        &mut self,
+    ) -> Option<(RopeDelta, InvalLines, Option<CursorMode>)> {
         if self.cur_undo < self.live_undos.len() {
             self.undos.remove(&self.live_undos[self.cur_undo]);
             self.cur_undo += 1;
             self.last_edit_type = EditType::Redo;
-            Some(self.undo(self.undos.clone()))
+            let (delta, inval_lines, _cursor_before, cursor_after) =
+                self.undo(self.undos.clone());
+            Some((delta, inval_lines, cursor_after))
         } else {
             None
         }
@@ -726,17 +839,11 @@ impl Buffer {
     }
 
     pub fn move_word_forward(&self, offset: usize) -> usize {
-        let new_offset = WordCursor::new(&self.text, offset)
-            .next_boundary()
-            .unwrap_or(offset);
-        new_offset
+        self.move_n_words_forward(offset, 1)
     }
 
     pub fn move_word_backward(&self, offset: usize) -> usize {
-        let new_offset = WordCursor::new(&self.text, offset)
-            .prev_boundary()
-            .unwrap_or(offset);
-        new_offset
+        self.move_n_words_backward(offset, 1)
     }
 
     pub fn next_grapheme_offset(
@@ -803,6 +910,58 @@ impl Buffer {
 
     pub fn len(&self) -> usize {
         self.text.len()
+    }
+
+    /// Find the nth (`count`) word starting at `offset` in either direction
+    /// depending on `find_next`.
+    ///
+    /// A `WordCursor` is created and given to the `find_next` function for the
+    /// search.  The `find_next` function should return None when there is no
+    /// more word found.  Despite the name, `find_next` can search in either
+    /// direction.
+    fn find_nth_word<F>(
+        &self,
+        offset: usize,
+        mut count: usize,
+        mut find_next: F,
+    ) -> usize
+    where
+        F: FnMut(&mut WordCursor) -> Option<usize>,
+    {
+        let mut cursor = WordCursor::new(self.text(), offset);
+        let mut new_offset = offset;
+        while count != 0 {
+            // FIXME: wait for if-let-chain
+            if let Some(offset) = find_next(&mut cursor) {
+                new_offset = offset;
+            } else {
+                break;
+            }
+            count -= 1;
+        }
+        new_offset
+    }
+
+    pub fn move_n_words_forward(&self, offset: usize, count: usize) -> usize {
+        self.find_nth_word(offset, count, |cursor| cursor.next_boundary())
+    }
+
+    pub fn move_n_wordends_forward(
+        &self,
+        offset: usize,
+        count: usize,
+        inserting: bool,
+    ) -> usize {
+        let mut new_offset =
+            self.find_nth_word(offset, count, |cursor| cursor.end_boundary());
+        if !inserting && new_offset != self.len() {
+            new_offset = self.prev_grapheme_offset(new_offset, 1, 0);
+        }
+        new_offset
+    }
+
+    pub fn move_n_words_backward(&self, offset: usize, count: usize) -> usize {
+        self.find_nth_word(offset, count, |cursor| cursor.prev_boundary())
     }
 }
 
@@ -1047,3 +1206,6 @@ pub fn rope_diff(
     }
     Some(changes)
 }
+
+#[cfg(test)]
+mod test;

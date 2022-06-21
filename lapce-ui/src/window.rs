@@ -3,7 +3,7 @@ use druid::{
     widget::{LensWrap, WidgetExt},
     BoxConstraints, Command, Env, Event, EventCtx, LayoutCtx, LifeCycle,
     LifeCycleCtx, PaintCtx, Point, RenderContext, Size, Target, Widget, WidgetId,
-    WidgetPod,
+    WidgetPod, WindowState,
 };
 use lapce_data::{
     command::{LapceUICommand, LAPCE_UI_COMMAND},
@@ -14,15 +14,13 @@ use std::cmp::Ordering;
 use std::sync::Arc;
 
 use crate::{
-    menu::Menu,
-    tab::{LapceTabHeader, LapceTabNew},
+    tab::{LapceTab, LapceTabHeader},
     title::Title,
 };
 
-pub struct LapceWindowNew {
+pub struct LapceWindow {
     pub title: WidgetPod<LapceWindowData, Box<dyn Widget<LapceWindowData>>>,
     pub tabs: Vec<WidgetPod<LapceWindowData, Box<dyn Widget<LapceWindowData>>>>,
-    menu: WidgetPod<LapceWindowData, Box<dyn Widget<LapceWindowData>>>,
     tab_headers: Vec<
         WidgetPod<
             LapceWindowData,
@@ -31,7 +29,7 @@ pub struct LapceWindowNew {
     >,
 }
 
-impl LapceWindowNew {
+impl LapceWindow {
     pub fn new(data: &LapceWindowData) -> Self {
         let title = WidgetPod::new(Title::new().boxed());
         let tabs = data
@@ -39,7 +37,7 @@ impl LapceWindowNew {
             .iter()
             .map(|tab_id| {
                 let data = data.tabs.get(tab_id).unwrap();
-                let tab = LapceTabNew::new(data);
+                let tab = LapceTab::new(data);
                 let tab = tab.lens(LapceTabLens(*tab_id));
                 WidgetPod::new(tab.boxed())
             })
@@ -52,12 +50,10 @@ impl LapceWindowNew {
                 WidgetPod::new(tab_header)
             })
             .collect();
-        let menu = Menu::new(&data.menu);
         Self {
             title,
             tabs,
             tab_headers,
-            menu: WidgetPod::new(menu.boxed()),
         }
     }
 
@@ -81,7 +77,7 @@ impl LapceWindowNew {
             data.keypress.clone(),
             ctx.get_external_handle(),
         );
-        let tab = LapceTabNew::new(&tab_data).lens(LapceTabLens(tab_id));
+        let tab = LapceTab::new(&tab_data).lens(LapceTabLens(tab_id));
         let tab_header = LapceTabHeader::new().lens(LapceTabLens(tab_id));
         data.tabs.insert(tab_id, tab_data);
         if replace_current {
@@ -171,7 +167,7 @@ impl LapceWindowNew {
     }
 }
 
-impl Widget<LapceWindowData> for LapceWindowNew {
+impl Widget<LapceWindowData> for LapceWindow {
     fn event(
         &mut self,
         ctx: &mut EventCtx,
@@ -180,17 +176,17 @@ impl Widget<LapceWindowData> for LapceWindowNew {
         env: &Env,
     ) {
         match event {
-            Event::WindowMoved(pos) => {
+            Event::WindowPosition(pos) => {
                 ctx.set_handled();
                 data.pos = *pos;
             }
-            Event::WindowSize(size, scale) => {
+            Event::WindowSize(size) => {
                 ctx.set_handled();
-                data.size = if let Some(scale) = scale {
-                    *size / *scale
-                } else {
-                    *size
-                };
+                data.size = *size;
+                data.maximised = matches!(
+                    ctx.window().get_window_state(),
+                    WindowState::Maximized
+                );
             }
             Event::WindowConnected => {
                 ctx.submit_command(Command::new(
@@ -234,24 +230,6 @@ impl Widget<LapceWindowData> for LapceWindowNew {
                         let workspace = (*tab.workspace).clone();
                         self.new_tab(ctx, data, workspace, true);
                         return;
-                    }
-                    LapceUICommand::HideMenu => {
-                        ctx.set_handled();
-                        let menu = Arc::make_mut(&mut data.menu);
-                        menu.shown = false;
-                    }
-                    LapceUICommand::ShowMenu(point, items) => {
-                        ctx.set_handled();
-                        let menu = Arc::make_mut(&mut data.menu);
-                        menu.origin = *point;
-                        menu.items = items.clone();
-                        menu.shown = true;
-                        menu.active = 0;
-                        ctx.submit_command(Command::new(
-                            LAPCE_UI_COMMAND,
-                            LapceUICommand::Focus,
-                            Target::Widget(menu.widget_id),
-                        ));
                     }
                     LapceUICommand::SetWorkspace(workspace) => {
                         let mut workspaces =
@@ -371,7 +349,6 @@ impl Widget<LapceWindowData> for LapceWindowNew {
             }
             _ => (),
         }
-        self.menu.event(ctx, event, data, env);
         self.tabs[data.active].event(ctx, event, data, env);
         match event {
             Event::MouseDown(_)
@@ -401,7 +378,6 @@ impl Widget<LapceWindowData> for LapceWindowNew {
         data: &LapceWindowData,
         env: &Env,
     ) {
-        self.menu.lifecycle(ctx, event, data, env);
         self.title.lifecycle(ctx, event, data, env);
         for tab in self.tabs.iter_mut() {
             tab.lifecycle(ctx, event, data, env);
@@ -418,7 +394,6 @@ impl Widget<LapceWindowData> for LapceWindowNew {
         data: &LapceWindowData,
         env: &Env,
     ) {
-        self.menu.update(ctx, data, env);
         self.title.update(ctx, data, env);
 
         if old_data.active != data.active {
@@ -442,9 +417,6 @@ impl Widget<LapceWindowData> for LapceWindowNew {
         env: &Env,
     ) -> Size {
         let self_size = bc.max();
-
-        self.menu.layout(ctx, bc, data, env);
-        self.menu.set_origin(ctx, data, env, data.menu.origin);
 
         let title_size = self.title.layout(ctx, bc, data, env);
         self.title.set_origin(ctx, data, env, Point::ZERO);
@@ -556,12 +528,15 @@ impl Widget<LapceWindowData> for LapceWindowNew {
                 .with_origin(Point::new(0.0, title_height));
             ctx.with_save(|ctx| {
                 ctx.clip(clip_rect);
-                ctx.blurred_rect(
-                    rect,
-                    5.0,
-                    data.config
-                        .get_color_unchecked(LapceTheme::LAPCE_DROPDOWN_SHADOW),
-                );
+                let shadow_width = data.config.ui.drop_shadow_width() as f64;
+                if shadow_width > 0.0 {
+                    ctx.blurred_rect(
+                        rect,
+                        shadow_width,
+                        data.config
+                            .get_color_unchecked(LapceTheme::LAPCE_DROPDOWN_SHADOW),
+                    );
+                }
                 ctx.fill(
                     rect,
                     data.config
@@ -583,7 +558,5 @@ impl Widget<LapceWindowData> for LapceWindowNew {
             Point::new(size.width, title_height - 0.5),
         );
         ctx.stroke(line, line_color, 1.0);
-
-        self.menu.paint(ctx, data, env);
     }
 }

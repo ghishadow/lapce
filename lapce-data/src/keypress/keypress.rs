@@ -2,7 +2,7 @@ use std::fmt::Display;
 
 use druid::{
     piet::{PietTextLayout, Text, TextLayout, TextLayoutBuilder},
-    FontFamily, Modifiers, PaintCtx, Point, Rect,
+    Modifiers, PaintCtx, Point, Rect,
 };
 
 use crate::{
@@ -99,7 +99,7 @@ impl KeyPress {
                 let text_layout = ctx
                     .text()
                     .new_text_layout("+")
-                    .font(FontFamily::SYSTEM_UI, 13.0)
+                    .font(config.ui.font_family(), config.ui.font_size() as f64)
                     .text_color(
                         config
                             .get_color_unchecked(LapceTheme::EDITOR_FOREGROUND)
@@ -141,6 +141,7 @@ impl KeyPress {
                         "meta" => mods.set(Modifiers::META, true),
                         "shift" => mods.set(Modifiers::SHIFT, true),
                         "alt" => mods.set(Modifiers::ALT, true),
+                        "" => (),
                         other => log::warn!("Invalid key modifier: {}", other),
                     }
                 }

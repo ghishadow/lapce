@@ -3,11 +3,21 @@ use lapce_core::{
     command::{EditCommand, FocusCommand, MoveCommand},
     mode::Mode,
 };
+use serde::{Deserialize, Serialize};
 
 use crate::{
     command::{CommandExecuted, CommandKind, LapceUICommand, LAPCE_UI_COMMAND},
+    data::LapceMainSplitData,
     keypress::KeyPressFocus,
+    split::SplitDirection,
 };
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub enum SettingsValueKind {
+    String,
+    Number,
+    Bool,
+}
 
 pub enum LapceSettingsKind {
     Core,
@@ -16,7 +26,6 @@ pub enum LapceSettingsKind {
 
 #[derive(Clone)]
 pub struct LapceSettingsPanelData {
-    pub shown: bool,
     pub panel_widget_id: WidgetId,
 
     pub keymap_widget_id: WidgetId,
@@ -35,6 +44,10 @@ impl KeyPressFocus for LapceSettingsPanelData {
 
     fn check_condition(&self, condition: &str) -> bool {
         matches!(condition, "modal_focus")
+    }
+
+    fn focus_only(&self) -> bool {
+        true
     }
 
     fn receive_char(&mut self, _ctx: &mut EventCtx, _c: &str) {}
@@ -63,7 +76,6 @@ impl KeyPressFocus for LapceSettingsPanelData {
 impl LapceSettingsPanelData {
     pub fn new() -> Self {
         Self {
-            shown: false,
             panel_widget_id: WidgetId::next(),
             keymap_widget_id: WidgetId::next(),
             keymap_view_id: WidgetId::next(),
@@ -79,6 +91,56 @@ impl Default for LapceSettingsPanelData {
     fn default() -> Self {
         Self::new()
     }
+}
+
+#[derive(Clone)]
+pub struct LapceSettingsFocusData {
+    pub widget_id: WidgetId,
+    pub editor_tab_id: WidgetId,
+    pub main_split: LapceMainSplitData,
+}
+
+impl KeyPressFocus for LapceSettingsFocusData {
+    fn get_mode(&self) -> Mode {
+        Mode::Insert
+    }
+
+    fn check_condition(&self, _condition: &str) -> bool {
+        false
+    }
+
+    fn run_command(
+        &mut self,
+        ctx: &mut EventCtx,
+        command: &crate::command::LapceCommand,
+        _count: Option<usize>,
+        _mods: Modifiers,
+        _env: &Env,
+    ) -> CommandExecuted {
+        match &command.kind {
+            CommandKind::Focus(cmd) => match cmd {
+                FocusCommand::SplitVertical => {
+                    self.main_split.split_settings(
+                        ctx,
+                        self.editor_tab_id,
+                        SplitDirection::Vertical,
+                    );
+                }
+                FocusCommand::SplitClose => {
+                    self.main_split.settings_close(
+                        ctx,
+                        self.widget_id,
+                        self.editor_tab_id,
+                    );
+                }
+                _ => return CommandExecuted::No,
+            },
+            _ => return CommandExecuted::No,
+        }
+        CommandExecuted::Yes
+    }
+
+    fn receive_char(&mut self, _ctx: &mut EventCtx, _c: &str) {}
 }
 
 pub enum SettingsValue {

@@ -13,13 +13,14 @@ use druid::{
     piet::{
         PietText, PietTextLayout, Text, TextAttribute, TextLayout, TextLayoutBuilder,
     },
-    ExtEventSink, FontFamily, Point, Target, Vec2, WidgetId,
+    ExtEventSink, Point, SingleUse, Size, Target, Vec2, WidgetId,
 };
 use lapce_core::{
     buffer::{Buffer, DiffLines, InvalLines},
     command::{EditCommand, MultiSelectionCommand},
     cursor::{ColPosition, Cursor, CursorMode},
     editor::{EditType, Editor},
+    language::LapceLanguage,
     mode::{Mode, MotionMode},
     movement::{LinePosition, Movement},
     register::{Clipboard, Register, RegisterData},
@@ -32,17 +33,18 @@ use lapce_rpc::{
     buffer::{BufferId, NewBufferResponse},
     style::{LineStyle, LineStyles, Style},
 };
-use lsp_types::CodeActionResponse;
+use lsp_types::{CodeActionOrCommand, CodeActionResponse};
 use serde::{Deserialize, Serialize};
 use xi_rope::{spans::Spans, Rope, RopeDelta};
 
 use crate::{
     command::{LapceUICommand, LAPCE_UI_COMMAND},
     config::{Config, LapceTheme},
-    editor::EditorLocationNew,
+    editor::EditorLocation,
     find::{Find, FindProgress},
-    history::DocumentHisotry,
+    history::DocumentHistory,
     proxy::LapceProxy,
+    settings::SettingsValueKind,
 };
 
 pub struct SystemClipboard {}
@@ -59,18 +61,14 @@ impl Clipboard for SystemClipboard {
 
 #[derive(Clone, Default)]
 pub struct TextLayoutCache {
-    font_size: usize,
-    font_family: FontFamily,
-    tab_wdith: usize,
+    config_id: u64,
     pub layouts: HashMap<usize, Arc<PietTextLayout>>,
 }
 
 impl TextLayoutCache {
     pub fn new() -> Self {
         Self {
-            font_size: 0,
-            font_family: FontFamily::SYSTEM_UI,
-            tab_wdith: 0,
+            config_id: 0,
             layouts: HashMap::new(),
         }
     }
@@ -79,20 +77,10 @@ impl TextLayoutCache {
         self.layouts.clear();
     }
 
-    pub fn check_attributes(
-        &mut self,
-        font_size: usize,
-        font_family: FontFamily,
-        tab_width: usize,
-    ) {
-        if self.font_size != font_size
-            || self.font_family != font_family
-            || self.tab_wdith != tab_width
-        {
+    pub fn check_attributes(&mut self, config_id: u64) {
+        if self.config_id != config_id {
             self.clear();
-            self.font_size = font_size;
-            self.font_family = font_family;
-            self.tab_wdith = tab_width;
+            self.config_id = config_id;
         }
     }
 }
@@ -112,7 +100,8 @@ pub enum LocalBufferKind {
 pub enum BufferContent {
     File(PathBuf),
     Local(LocalBufferKind),
-    Value(String),
+    SettingsValue(String, SettingsValueKind, String, String),
+    Scratch(BufferId, String),
 }
 
 impl BufferContent {
@@ -132,7 +121,8 @@ impl BufferContent {
                 | LocalBufferKind::Keymap => true,
                 LocalBufferKind::Empty => false,
             },
-            BufferContent::Value(_) => true,
+            BufferContent::SettingsValue(..) => true,
+            BufferContent::Scratch(..) => false,
         }
     }
 
@@ -147,15 +137,36 @@ impl BufferContent {
                 | LocalBufferKind::Keymap => true,
                 LocalBufferKind::Empty | LocalBufferKind::SourceControl => false,
             },
-            BufferContent::Value(_) => true,
+            BufferContent::SettingsValue(..) => true,
+            BufferContent::Scratch(..) => false,
         }
     }
 
     pub fn is_search(&self) -> bool {
         match &self {
             BufferContent::File(_) => false,
-            BufferContent::Value(_) => false,
+            BufferContent::SettingsValue(..) => false,
+            BufferContent::Scratch(..) => false,
             BufferContent::Local(local) => matches!(local, LocalBufferKind::Search),
+        }
+    }
+
+    pub fn is_settings(&self) -> bool {
+        match &self {
+            BufferContent::File(_) => false,
+            BufferContent::SettingsValue(..) => true,
+            BufferContent::Local(_) => false,
+            BufferContent::Scratch(..) => false,
+        }
+    }
+
+    pub fn file_name(&self) -> &str {
+        match self {
+            BufferContent::File(p) => {
+                p.file_name().and_then(|f| f.to_str()).unwrap_or("")
+            }
+            BufferContent::Scratch(_, scratch_doc_name) => scratch_doc_name,
+            _ => "",
         }
     }
 }
@@ -172,7 +183,7 @@ pub struct Document {
     text_layouts: Rc<RefCell<TextLayoutCache>>,
     load_started: Rc<RefCell<bool>>,
     loaded: bool,
-    histories: im::HashMap<String, DocumentHisotry>,
+    histories: im::HashMap<String, DocumentHistory>,
     pub cursor_offset: usize,
     pub scroll_offset: Vec2,
     pub code_actions: im::HashMap<usize, CodeActionResponse>,
@@ -192,11 +203,16 @@ impl Document {
         let syntax = match &content {
             BufferContent::File(path) => Syntax::init(path),
             BufferContent::Local(_) => None,
-            BufferContent::Value(_) => None,
+            BufferContent::SettingsValue(..) => None,
+            BufferContent::Scratch(..) => None,
+        };
+        let id = match &content {
+            BufferContent::Scratch(id, _) => *id,
+            _ => BufferId::next(),
         };
 
         Self {
-            id: BufferId::next(),
+            id,
             tab_id,
             buffer: Buffer::new(""),
             content,
@@ -225,6 +241,17 @@ impl Document {
         self.loaded
     }
 
+    pub fn set_content(&mut self, content: BufferContent) {
+        self.content = content;
+        self.syntax = match &self.content {
+            BufferContent::File(path) => Syntax::init(path),
+            BufferContent::Local(_) => None,
+            BufferContent::SettingsValue(..) => None,
+            BufferContent::Scratch(..) => None,
+        };
+        self.on_update(None);
+    }
+
     pub fn content(&self) -> &BufferContent {
         &self.content
     }
@@ -233,19 +260,30 @@ impl Document {
         self.buffer.rev()
     }
 
-    pub fn set_rev(&mut self, rev: u64) {
-        self.buffer.set_rev(rev)
-    }
-
-    pub fn load_content(&mut self, content: &str) {
-        self.code_actions.clear();
-        self.buffer.load_content(content);
+    pub fn init_content(&mut self, content: Rope) {
+        self.buffer.init_content(content);
         self.buffer.detect_indent(self.syntax.as_ref());
         self.loaded = true;
         self.on_update(None);
     }
 
-    pub fn retrieve_file(&mut self, locations: Vec<(WidgetId, EditorLocationNew)>) {
+    pub fn set_language(&mut self, language: LapceLanguage) {
+        self.syntax = Some(Syntax::from_language(language));
+    }
+
+    pub fn reload(&mut self, content: Rope, set_pristine: bool) {
+        self.code_actions.clear();
+        let delta = self.buffer.reload(content, set_pristine);
+        self.apply_deltas(&[delta]);
+    }
+
+    pub fn handle_file_changed(&mut self, content: Rope) {
+        if self.buffer.is_pristine() {
+            self.reload(content, true);
+        }
+    }
+
+    pub fn retrieve_file(&mut self, locations: Vec<(WidgetId, EditorLocation)>) {
         if self.loaded || *self.load_started.borrow() {
             return;
         }
@@ -268,9 +306,9 @@ impl Document {
                             {
                                 let _ = event_sink.submit_command(
                                     LAPCE_UI_COMMAND,
-                                    LapceUICommand::LoadBuffer {
+                                    LapceUICommand::InitBufferContent {
                                         path,
-                                        content: resp.content,
+                                        content: Rope::from(resp.content),
                                         locations,
                                     },
                                     Target::Widget(tab_id),
@@ -290,7 +328,7 @@ impl Document {
             return;
         }
 
-        let history = DocumentHisotry::new(version.to_string());
+        let history = DocumentHistory::new(version.to_string());
         history.retrieve(self);
         self.histories.insert(version.to_string(), history);
     }
@@ -302,12 +340,12 @@ impl Document {
     }
 
     pub fn load_history(&mut self, version: &str, content: Rope) {
-        let mut history = DocumentHisotry::new(version.to_string());
+        let mut history = DocumentHistory::new(version.to_string());
         history.load_content(content, self);
         self.histories.insert(version.to_string(), history);
     }
 
-    pub fn get_history(&self, version: &str) -> Option<&DocumentHisotry> {
+    pub fn get_history(&self, version: &str) -> Option<&DocumentHistory> {
         self.histories.get(version)
     }
 
@@ -441,6 +479,7 @@ impl Document {
     fn notify_special(&self) {
         match &self.content {
             BufferContent::File(_) => {}
+            BufferContent::Scratch(..) => {}
             BufferContent::Local(local) => {
                 let s = self.buffer.text().to_string();
                 match local {
@@ -484,7 +523,7 @@ impl Document {
                     }
                 }
             }
-            BufferContent::Value(_) => {}
+            BufferContent::SettingsValue(..) => {}
         }
     }
 
@@ -510,34 +549,32 @@ impl Document {
     }
 
     fn trigger_syntax_change(&self, delta: Option<&RopeDelta>) {
-        if let BufferContent::File(path) = &self.content {
-            if let Some(syntax) = self.syntax.clone() {
-                let path = path.clone();
-                let rev = self.buffer.rev();
-                let text = self.buffer.text().clone();
-                let delta = delta.cloned();
-                let atomic_rev = self.buffer.atomic_rev();
-                let event_sink = self.event_sink.clone();
-                let tab_id = self.tab_id;
-                rayon::spawn(move || {
-                    if atomic_rev.load(atomic::Ordering::Acquire) != rev {
-                        return;
-                    }
-                    let new_syntax = syntax.parse(rev, text, delta);
-                    if atomic_rev.load(atomic::Ordering::Acquire) != rev {
-                        return;
-                    }
-                    let _ = event_sink.submit_command(
-                        LAPCE_UI_COMMAND,
-                        LapceUICommand::UpdateSyntax {
-                            path,
-                            rev,
-                            syntax: new_syntax,
-                        },
-                        Target::Widget(tab_id),
-                    );
-                });
-            }
+        if let Some(syntax) = self.syntax.clone() {
+            let content = self.content.clone();
+            let rev = self.buffer.rev();
+            let text = self.buffer.text().clone();
+            let delta = delta.cloned();
+            let atomic_rev = self.buffer.atomic_rev();
+            let event_sink = self.event_sink.clone();
+            let tab_id = self.tab_id;
+            rayon::spawn(move || {
+                if atomic_rev.load(atomic::Ordering::Acquire) != rev {
+                    return;
+                }
+                let new_syntax = syntax.parse(rev, text, delta);
+                if atomic_rev.load(atomic::Ordering::Acquire) != rev {
+                    return;
+                }
+                let _ = event_sink.submit_command(
+                    LAPCE_UI_COMMAND,
+                    LapceUICommand::UpdateSyntax {
+                        content,
+                        rev,
+                        syntax: SingleUse::new(new_syntax),
+                    },
+                    Target::Widget(tab_id),
+                );
+            });
         }
     }
 
@@ -589,8 +626,11 @@ impl Document {
         cursor: &mut Cursor,
         s: &str,
     ) -> Vec<(RopeDelta, InvalLines)> {
+        let old_cursor = cursor.mode.clone();
         let deltas =
             Editor::insert(cursor, &mut self.buffer, s, self.syntax.as_ref());
+        self.buffer_mut().set_cursor_before(old_cursor);
+        self.buffer_mut().set_cursor_after(cursor.mode.clone());
         self.apply_deltas(&deltas);
         deltas
     }
@@ -607,14 +647,15 @@ impl Document {
 
     pub fn do_edit(
         &mut self,
-        curosr: &mut Cursor,
+        cursor: &mut Cursor,
         cmd: &EditCommand,
         modal: bool,
         register: &mut Register,
     ) -> Vec<(RopeDelta, InvalLines)> {
         let mut clipboard = SystemClipboard {};
+        let old_cursor = cursor.mode.clone();
         let deltas = Editor::do_edit(
-            curosr,
+            cursor,
             &mut self.buffer,
             cmd,
             self.syntax.as_ref(),
@@ -622,6 +663,8 @@ impl Document {
             modal,
             register,
         );
+        self.buffer_mut().set_cursor_before(old_cursor);
+        self.buffer_mut().set_cursor_after(cursor.mode.clone());
         self.apply_deltas(&deltas);
         deltas
     }
@@ -943,11 +986,7 @@ impl Document {
         font_size: usize,
         config: &Config,
     ) -> Arc<PietTextLayout> {
-        self.text_layouts.borrow_mut().check_attributes(
-            font_size,
-            config.editor.font_family(),
-            config.editor.tab_width,
-        );
+        self.text_layouts.borrow_mut().check_attributes(config.id);
         if self.text_layouts.borrow().layouts.get(&line).is_none() {
             self.text_layouts.borrow_mut().layouts.insert(
                 line,
@@ -974,12 +1013,12 @@ impl Document {
             config.tab_width(text, config.editor.font_family(), font_size);
 
         let font_family = if self.content.is_input() {
-            FontFamily::SYSTEM_UI
+            config.ui.font_family()
         } else {
             config.editor.font_family()
         };
         let font_size = if self.content.is_input() {
-            13
+            config.ui.font_size()
         } else {
             font_size
         };
@@ -1279,8 +1318,21 @@ impl Document {
             }
             Movement::FirstNonBlank => {
                 let line = self.buffer.line_of_offset(offset);
-                let new_offset = self.buffer.first_non_blank_character_on_line(line);
-                (new_offset, Some(ColPosition::FirstNonBlank))
+                let non_blank_offset =
+                    self.buffer.first_non_blank_character_on_line(line);
+                let start_line_offset = self.buffer.offset_of_line(line);
+                if offset > non_blank_offset {
+                    // Jump to the first non-whitespace character if we're strictly after it
+                    (non_blank_offset, Some(ColPosition::FirstNonBlank))
+                } else {
+                    // If we're at the start of the line, also jump to the first not blank
+                    if start_line_offset == offset {
+                        (non_blank_offset, Some(ColPosition::FirstNonBlank))
+                    } else {
+                        // Otherwise, jump to the start of the line
+                        (start_line_offset, Some(ColPosition::Start))
+                    }
+                }
             }
             Movement::StartOfLine => {
                 let line = self.buffer.line_of_offset(offset);
@@ -1326,24 +1378,19 @@ impl Document {
                 (new_offset, None)
             }
             Movement::WordEndForward => {
-                let mut new_offset = WordCursor::new(self.buffer.text(), offset)
-                    .end_boundary()
-                    .unwrap_or(offset);
-                if mode != Mode::Insert {
-                    new_offset = self.buffer.prev_grapheme_offset(new_offset, 1, 0);
-                }
+                let new_offset = self.buffer.move_n_wordends_forward(
+                    offset,
+                    count,
+                    mode == Mode::Insert,
+                );
                 (new_offset, None)
             }
             Movement::WordForward => {
-                let new_offset = WordCursor::new(self.buffer.text(), offset)
-                    .next_boundary()
-                    .unwrap_or(offset);
+                let new_offset = self.buffer.move_n_words_forward(offset, count);
                 (new_offset, None)
             }
             Movement::WordBackward => {
-                let new_offset = WordCursor::new(self.buffer.text(), offset)
-                    .prev_boundary()
-                    .unwrap_or(offset);
+                let new_offset = self.buffer.move_n_words_backward(offset, count);
                 (new_offset, None)
             }
             Movement::NextUnmatched(c) => {
@@ -1385,6 +1432,44 @@ impl Document {
                 }
             }
         }
+    }
+
+    pub fn code_action_size(
+        &self,
+        text: &mut PietText,
+        offset: usize,
+        config: &Config,
+    ) -> Size {
+        let prev_offset = self.buffer.prev_code_boundary(offset);
+        let empty_vec = Vec::new();
+        let code_actions = self.code_actions.get(&prev_offset).unwrap_or(&empty_vec);
+
+        let action_text_layouts: Vec<PietTextLayout> = code_actions
+            .iter()
+            .map(|code_action| {
+                let title = match code_action {
+                    CodeActionOrCommand::Command(cmd) => cmd.title.to_string(),
+                    CodeActionOrCommand::CodeAction(action) => {
+                        action.title.to_string()
+                    }
+                };
+
+                text.new_text_layout(title)
+                    .font(config.ui.font_family(), config.ui.font_size() as f64)
+                    .build()
+                    .unwrap()
+            })
+            .collect();
+
+        let mut width = 0.0;
+        for text_layout in &action_text_layouts {
+            let line_width = text_layout.size().width + 10.0;
+            if line_width > width {
+                width = line_width;
+            }
+        }
+        let line_height = config.editor.line_height as f64;
+        Size::new(width, code_actions.len() as f64 * line_height)
     }
 
     pub fn reset_find(&self, current_find: &Find) {

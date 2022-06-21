@@ -6,7 +6,7 @@ use lapce_data::data::LapceTabData;
 
 use crate::{
     editor::{gutter::LapceEditorGutter, LapceEditor},
-    scroll::{LapceIdentityWrapper, LapcePadding, LapceScrollNew},
+    scroll::{LapceIdentityWrapper, LapcePadding, LapceScroll},
 };
 
 pub struct LapceEditorContainer {
@@ -17,18 +17,18 @@ pub struct LapceEditorContainer {
         WidgetPod<LapceTabData, LapcePadding<LapceTabData, LapceEditorGutter>>,
     pub editor: WidgetPod<
         LapceTabData,
-        LapceIdentityWrapper<LapceScrollNew<LapceTabData, LapceEditor>>,
+        LapceIdentityWrapper<LapceScroll<LapceTabData, LapceEditor>>,
     >,
 }
 
 impl LapceEditorContainer {
-    pub fn new(view_id: WidgetId) -> Self {
+    pub fn new(view_id: WidgetId, editor_id: WidgetId) -> Self {
         let scroll_id = WidgetId::next();
         let gutter = LapceEditorGutter::new(view_id);
         let gutter = LapcePadding::new((10.0, 0.0, 0.0, 0.0), gutter);
-        let editor = LapceEditor::new(view_id);
+        let editor = LapceEditor::new(view_id, editor_id);
         let editor = LapceIdentityWrapper::wrap(
-            LapceScrollNew::new(editor).vertical().horizontal(),
+            LapceScroll::new(editor).vertical().horizontal(),
             scroll_id,
         );
         Self {

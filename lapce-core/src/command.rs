@@ -53,10 +53,13 @@ pub enum EditCommand {
     Undo,
     #[strum(serialize = "redo")]
     Redo,
+    #[strum(message = "Copy")]
     #[strum(serialize = "clipboard_copy")]
     ClipboardCopy,
+    #[strum(message = "Cut")]
     #[strum(serialize = "clipboard_cut")]
     ClipboardCut,
+    #[strum(message = "Paste")]
     #[strum(serialize = "clipboard_paste")]
     ClipboardPaste,
     #[strum(serialize = "yank")]
@@ -229,8 +232,14 @@ pub enum FocusCommand {
     ScrollDown,
     #[strum(serialize = "center_of_window")]
     CenterOfWindow,
+    #[strum(serialize = "top_of_window")]
+    TopOfWindow,
+    #[strum(serialize = "bottom_of_window")]
+    BottomOfWindow,
     #[strum(serialize = "show_code_actions")]
     ShowCodeActions,
+    #[strum(serialize = "get_completion")]
+    GetCompletion,
     /// This will close a modal, such as the settings window or completion
     #[strum(message = "Close Modal")]
     #[strum(serialize = "modal.close")]
@@ -269,6 +278,10 @@ pub enum FocusCommand {
     #[strum(message = "Save")]
     #[strum(serialize = "save")]
     Save,
+    #[strum(serialize = "save_and_exit")]
+    SaveAndExit,
+    #[strum(serialize = "force_exit")]
+    ForceExit,
 }
 
 #[derive(

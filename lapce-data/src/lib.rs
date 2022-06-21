@@ -1,3 +1,4 @@
+pub mod alert;
 pub mod command;
 pub mod completion;
 pub mod config;
@@ -12,7 +13,6 @@ pub mod history;
 pub mod hover;
 pub mod keypress;
 pub mod menu;
-pub mod outline;
 pub mod palette;
 pub mod panel;
 pub mod picker;

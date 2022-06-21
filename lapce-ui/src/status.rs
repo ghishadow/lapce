@@ -1,7 +1,8 @@
 use druid::{
+    kurbo::Line,
     piet::{Text, TextLayout, TextLayoutBuilder},
-    Command, Event, EventCtx, FontFamily, MouseEvent, PaintCtx, Point,
-    RenderContext, Size, Target, Widget,
+    Command, Event, EventCtx, MouseEvent, PaintCtx, Point, RenderContext, Size,
+    Target, Widget,
 };
 use lapce_core::mode::Mode;
 use lapce_data::{
@@ -13,17 +14,15 @@ use lapce_data::{
 
 use crate::{svg::get_svg, tab::LapceIcon};
 
-pub struct LapceStatusNew {
-    height: f64,
+pub struct LapceStatus {
     panel_icons: Vec<LapceIcon>,
     mouse_pos: Point,
     icon_size: f64,
 }
 
-impl LapceStatusNew {
+impl LapceStatus {
     pub fn new() -> Self {
         Self {
-            height: 25.0,
             panel_icons: Vec::new(),
             mouse_pos: Point::ZERO,
             icon_size: 13.0,
@@ -67,7 +66,7 @@ impl LapceStatusNew {
                 };
 
                 LapceIcon {
-                    icon: p.svg_name().to_string(),
+                    icon: p.svg_name(),
                     rect: Size::new(self_size.height, self_size.height)
                         .to_rect()
                         .with_origin(Point::new(
@@ -109,7 +108,7 @@ impl LapceStatusNew {
         &self,
         left: f64,
         height: f64,
-        icon: &str,
+        icon: &'static str,
         label: String,
         ctx: &mut PaintCtx,
         config: &Config,
@@ -119,7 +118,7 @@ impl LapceStatusNew {
         let text_layout = ctx
             .text()
             .new_text_layout(label)
-            .font(FontFamily::SYSTEM_UI, 13.0)
+            .font(config.ui.font_family(), config.ui.font_size() as f64)
             .text_color(fg_color.clone())
             .build()
             .unwrap();
@@ -146,13 +145,13 @@ impl LapceStatusNew {
     }
 }
 
-impl Default for LapceStatusNew {
+impl Default for LapceStatus {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl Widget<LapceTabData> for LapceStatusNew {
+impl Widget<LapceTabData> for LapceStatus {
     fn event(
         &mut self,
         ctx: &mut druid::EventCtx,
@@ -199,7 +198,7 @@ impl Widget<LapceTabData> for LapceStatusNew {
             data.main_split.active_editor(),
         ) {
             (Some(old_data), Some(data)) => {
-                if old_data.new_cursor.get_mode() != data.new_cursor.get_mode() {
+                if old_data.cursor.get_mode() != data.cursor.get_mode() {
                     ctx.request_paint();
                 }
             }
@@ -226,7 +225,8 @@ impl Widget<LapceTabData> for LapceStatusNew {
         data: &LapceTabData,
         _env: &druid::Env,
     ) -> Size {
-        let self_size = Size::new(bc.max().width, self.height);
+        let self_size =
+            Size::new(bc.max().width, data.config.ui.status_height() as f64);
         self.panel_icons = self.panel_icons(self_size, data);
         self_size
     }
@@ -234,12 +234,24 @@ impl Widget<LapceTabData> for LapceStatusNew {
     fn paint(&mut self, ctx: &mut PaintCtx, data: &LapceTabData, _env: &druid::Env) {
         let size = ctx.size();
         let rect = size.to_rect();
-        ctx.blurred_rect(
-            rect,
-            5.0,
-            data.config
-                .get_color_unchecked(LapceTheme::LAPCE_DROPDOWN_SHADOW),
-        );
+        let shadow_width = data.config.ui.drop_shadow_width() as f64;
+        if shadow_width > 0.0 {
+            ctx.blurred_rect(
+                rect,
+                shadow_width,
+                data.config
+                    .get_color_unchecked(LapceTheme::LAPCE_DROPDOWN_SHADOW),
+            );
+        } else {
+            ctx.stroke(
+                Line::new(
+                    Point::new(rect.x0, rect.y0 - 0.5),
+                    Point::new(rect.x1, rect.y0 - 0.5),
+                ),
+                data.config.get_color_unchecked(LapceTheme::LAPCE_BORDER),
+                1.0,
+            );
+        }
         ctx.fill(
             rect,
             data.config
@@ -255,9 +267,7 @@ impl Widget<LapceTabData> for LapceStatusNew {
                     .get(&data.terminal.active_term_id)
                     .map(|terminal| terminal.mode)
             } else {
-                data.main_split
-                    .active_editor()
-                    .map(|e| e.new_cursor.get_mode())
+                data.main_split.active_editor().map(|e| e.cursor.get_mode())
             };
 
             let (mode, color) = match mode.unwrap_or(Mode::Normal) {
@@ -270,7 +280,10 @@ impl Widget<LapceTabData> for LapceStatusNew {
             let text_layout = ctx
                 .text()
                 .new_text_layout(mode)
-                .font(FontFamily::SYSTEM_UI, 13.0)
+                .font(
+                    data.config.ui.font_family(),
+                    data.config.ui.font_size() as f64,
+                )
                 .text_color(
                     data.config
                         .get_color_unchecked(LapceTheme::EDITOR_BACKGROUND)
@@ -291,16 +304,16 @@ impl Widget<LapceTabData> for LapceStatusNew {
         left = self.paint_icon_with_label(
             left,
             size.height,
-            "warning.svg",
-            data.main_split.warning_count.to_string(),
+            "error.svg",
+            data.main_split.error_count.to_string(),
             ctx,
             &data.config,
         );
         left = self.paint_icon_with_label(
-            left,
+            left - 5.0,
             size.height,
-            "error.svg",
-            data.main_split.error_count.to_string(),
+            "warning.svg",
+            data.main_split.warning_count.to_string(),
             ctx,
             &data.config,
         );
@@ -314,7 +327,10 @@ impl Widget<LapceTabData> for LapceStatusNew {
             let text_layout = ctx
                 .text()
                 .new_text_layout(text)
-                .font(FontFamily::SYSTEM_UI, 13.0)
+                .font(
+                    data.config.ui.font_family(),
+                    data.config.ui.font_size() as f64,
+                )
                 .text_color(
                     data.config
                         .get_color_unchecked(LapceTheme::EDITOR_FOREGROUND)
@@ -341,7 +357,7 @@ impl Widget<LapceTabData> for LapceStatusNew {
                         .get_color_unchecked(LapceTheme::EDITOR_CURRENT_LINE),
                 );
             }
-            if let Some(svg) = get_svg(&icon.icon) {
+            if let Some(svg) = get_svg(icon.icon) {
                 ctx.draw_svg(
                     &svg,
                     icon.rect.inflate(-icon_padding, -icon_padding),

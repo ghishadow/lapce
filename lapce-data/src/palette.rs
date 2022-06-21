@@ -20,13 +20,13 @@ use uuid::Uuid;
 use crate::command::CommandKind;
 use crate::data::{LapceWorkspace, LapceWorkspaceType};
 use crate::document::BufferContent;
+use crate::editor::EditorLocation;
 use crate::{
     command::LAPCE_UI_COMMAND,
     command::{CommandExecuted, LAPCE_COMMAND},
     command::{LapceCommand, LapceUICommand},
     config::Config,
     data::{FocusArea, LapceMainSplitData, LapceTabData, PanelKind},
-    editor::EditorLocationNew,
     find::Find,
     keypress::{KeyPressData, KeyPressFocus},
     proxy::LapceProxy,
@@ -97,7 +97,7 @@ pub enum PaletteItemContent {
         range: Range,
         container_name: Option<String>,
     },
-    ReferenceLocation(PathBuf, EditorLocationNew),
+    ReferenceLocation(PathBuf, EditorLocation),
     Workspace(LapceWorkspace),
     SshHost(String, String),
     Command(LapceCommand),
@@ -110,7 +110,7 @@ impl PaletteItemContent {
         ctx: &mut EventCtx,
         preview: bool,
         preview_editor_id: WidgetId,
-    ) -> Option<PaletteType> {
+    ) -> bool {
         match &self {
             PaletteItemContent::File(_, full_path) => {
                 if !preview {
@@ -181,6 +181,7 @@ impl PaletteItemContent {
                         Target::Auto,
                     ));
                 }
+                return !command.is_palette_command();
             }
             PaletteItemContent::TerminalLine(line, _content) => {
                 if !preview {
@@ -208,12 +209,12 @@ impl PaletteItemContent {
                 }
             }
         }
-        None
+        true
     }
 }
 
 #[derive(Clone, Debug)]
-pub struct NewPaletteItem {
+pub struct PaletteItem {
     pub content: PaletteItemContent,
     pub filter_text: String,
     pub score: i64,
@@ -267,14 +268,14 @@ pub struct PaletteData {
     pub status: PaletteStatus,
     pub proxy: Arc<LapceProxy>,
     pub palette_type: PaletteType,
-    pub sender: Sender<(String, String, Vec<NewPaletteItem>)>,
-    pub receiver: Option<Receiver<(String, String, Vec<NewPaletteItem>)>>,
+    pub sender: Sender<(String, String, Vec<PaletteItem>)>,
+    pub receiver: Option<Receiver<(String, String, Vec<PaletteItem>)>>,
     pub run_id: String,
     pub input: String,
     pub cursor: usize,
     pub index: usize,
-    pub items: Vec<NewPaletteItem>,
-    pub filtered_items: Vec<NewPaletteItem>,
+    pub items: Vec<PaletteItem>,
+    pub filtered_items: Vec<PaletteItem>,
     pub preview_editor: WidgetId,
     pub input_editor: WidgetId,
 }
@@ -399,7 +400,7 @@ impl PaletteData {
         self.len() == 0
     }
 
-    pub fn current_items(&self) -> &Vec<NewPaletteItem> {
+    pub fn current_items(&self) -> &Vec<PaletteItem> {
         if self.get_input() == "" {
             &self.items
         } else {
@@ -413,7 +414,7 @@ impl PaletteData {
         }
     }
 
-    pub fn get_item(&self) -> Option<&NewPaletteItem> {
+    pub fn get_item(&self) -> Option<&PaletteItem> {
         let items = self.current_items();
         if items.is_empty() {
             return None;
@@ -446,7 +447,7 @@ impl PaletteViewData {
         palette.palette_type = PaletteType::File;
         palette.items.clear();
         palette.filtered_items.clear();
-        if let Some(active) = *self.main_split.active {
+        if let Some(active) = *self.main_split.active_tab {
             ctx.submit_command(Command::new(
                 LAPCE_UI_COMMAND,
                 LapceUICommand::Focus,
@@ -458,10 +459,10 @@ impl PaletteViewData {
     pub fn run_references(
         &mut self,
         ctx: &mut EventCtx,
-        locations: &[EditorLocationNew],
+        locations: &[EditorLocation],
     ) {
         self.run(ctx, Some(PaletteType::Reference));
-        let items: Vec<NewPaletteItem> = locations
+        let items: Vec<PaletteItem> = locations
             .iter()
             .map(|l| {
                 let full_path = l.path.clone();
@@ -473,7 +474,7 @@ impl PaletteViewData {
                         .to_path_buf();
                 }
                 let filter_text = path.to_str().unwrap_or("").to_string();
-                NewPaletteItem {
+                PaletteItem {
                     content: PaletteItemContent::ReferenceLocation(path, l.clone()),
                     filter_text,
                     score: 0,
@@ -606,17 +607,13 @@ impl PaletteViewData {
             find.set_find(&pattern, false, false, false);
             ctx.submit_command(Command::new(
                 LAPCE_UI_COMMAND,
-                LapceUICommand::UpdateSearch(pattern),
+                LapceUICommand::UpdateSearchInput(pattern),
                 Target::Widget(*self.main_split.tab_id),
             ));
         }
         let palette = Arc::make_mut(&mut self.palette);
         if let Some(item) = palette.get_item() {
-            if let Some(palette_type) =
-                item.content.select(ctx, false, palette.preview_editor)
-            {
-                self.run(ctx, Some(palette_type));
-            } else {
+            if item.content.select(ctx, false, palette.preview_editor) {
                 self.cancel(ctx);
             }
         } else {
@@ -671,7 +668,7 @@ impl PaletteViewData {
 
     fn get_palette_type(&self) -> PaletteType {
         match self.palette.palette_type {
-            PaletteType::Reference | PaletteType::SshHost => {
+            PaletteType::Reference | PaletteType::SshHost | PaletteType::Theme => {
                 return self.palette.palette_type.clone();
             }
             _ => (),
@@ -698,7 +695,7 @@ impl PaletteViewData {
                 let resp: Result<Vec<PathBuf>, serde_json::Error> =
                     serde_json::from_value(res);
                 if let Ok(resp) = resp {
-                    let items: Vec<NewPaletteItem> = resp
+                    let items: Vec<PaletteItem> = resp
                         .iter()
                         .enumerate()
                         .map(|(_index, path)| {
@@ -712,7 +709,7 @@ impl PaletteViewData {
                             }
                             let filter_text =
                                 path.to_str().unwrap_or("").to_string();
-                            NewPaletteItem {
+                            PaletteItem {
                                 content: PaletteItemContent::File(path, full_path),
                                 filter_text,
                                 score: 0,
@@ -743,7 +740,7 @@ impl PaletteViewData {
         let palette = Arc::make_mut(&mut self.palette);
         palette.items = hosts
             .iter()
-            .map(|(user, host)| NewPaletteItem {
+            .map(|(user, host)| PaletteItem {
                 content: PaletteItemContent::SshHost(
                     user.to_string(),
                     host.to_string(),
@@ -777,7 +774,7 @@ impl PaletteViewData {
                         format!("[wsl] {text}")
                     }
                 };
-                NewPaletteItem {
+                PaletteItem {
                     content: PaletteItemContent::Workspace(w),
                     filter_text,
                     score: 0,
@@ -790,9 +787,10 @@ impl PaletteViewData {
     fn get_themes(&mut self, _ctx: &mut EventCtx, config: &Config) {
         let palette = Arc::make_mut(&mut self.palette);
         palette.items = config
-            .themes
-            .keys()
-            .map(|n| NewPaletteItem {
+            .available_themes
+            .values()
+            .sorted_by_key(|(n, _)| n)
+            .map(|(n, _)| PaletteItem {
                 content: PaletteItemContent::Theme(n.to_string()),
                 filter_text: n.to_string(),
                 score: 0,
@@ -814,7 +812,7 @@ impl PaletteViewData {
                     return None;
                 }
 
-                c.kind.desc().as_ref().map(|m| NewPaletteItem {
+                c.kind.desc().as_ref().map(|m| PaletteItem {
                     content: PaletteItemContent::Command(c.clone()),
                     filter_text: m.to_string(),
                     score: 0,
@@ -853,7 +851,7 @@ impl PaletteViewData {
                         last_row = Some(row_str.clone());
                     } else {
                         last_row = None;
-                        let item = NewPaletteItem {
+                        let item = PaletteItem {
                             content: PaletteItemContent::TerminalLine(
                                 current_line,
                                 row_str.clone(),
@@ -894,7 +892,7 @@ impl PaletteViewData {
                     line_number,
                     l
                 );
-                NewPaletteItem {
+                PaletteItem {
                     content: PaletteItemContent::Line(line_number, text.clone()),
                     filter_text: text,
                     score: 0,
@@ -928,7 +926,7 @@ impl PaletteViewData {
                         let resp: Result<DocumentSymbolResponse, serde_json::Error> =
                             serde_json::from_value(res);
                         if let Ok(resp) = resp {
-                            let items: Vec<NewPaletteItem> = match resp {
+                            let items: Vec<PaletteItem> = match resp {
                                 DocumentSymbolResponse::Flat(symbols) => symbols
                                     .iter()
                                     .map(|s| {
@@ -938,7 +936,7 @@ impl PaletteViewData {
                                         {
                                             filter_text += container_name;
                                         }
-                                        NewPaletteItem {
+                                        PaletteItem {
                                             content:
                                                 PaletteItemContent::DocumentSymbol {
                                                     kind: s.kind,
@@ -956,7 +954,7 @@ impl PaletteViewData {
                                     .collect(),
                                 DocumentSymbolResponse::Nested(symbols) => symbols
                                     .iter()
-                                    .map(|s| NewPaletteItem {
+                                    .map(|s| PaletteItem {
                                         content:
                                             PaletteItemContent::DocumentSymbol {
                                                 kind: s.kind,
@@ -983,13 +981,13 @@ impl PaletteViewData {
     }
 
     pub fn update_process(
-        receiver: Receiver<(String, String, Vec<NewPaletteItem>)>,
+        receiver: Receiver<(String, String, Vec<PaletteItem>)>,
         widget_id: WidgetId,
         event_sink: ExtEventSink,
     ) {
         fn receive_batch(
-            receiver: &Receiver<(String, String, Vec<NewPaletteItem>)>,
-        ) -> Result<(String, String, Vec<NewPaletteItem>)> {
+            receiver: &Receiver<(String, String, Vec<PaletteItem>)>,
+        ) -> Result<(String, String, Vec<PaletteItem>)> {
             let (mut run_id, mut input, mut items) = receiver.recv()?;
             loop {
                 match receiver.try_recv() {
@@ -1029,10 +1027,10 @@ impl PaletteViewData {
     fn filter_items(
         _run_id: &str,
         input: &str,
-        items: Vec<NewPaletteItem>,
+        items: Vec<PaletteItem>,
         matcher: &SkimMatcherV2,
-    ) -> Vec<NewPaletteItem> {
-        let mut items: Vec<NewPaletteItem> = items
+    ) -> Vec<PaletteItem> {
+        let mut items: Vec<PaletteItem> = items
             .iter()
             .filter_map(|i| {
                 if let Some((score, indices)) =

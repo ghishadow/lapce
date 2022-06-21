@@ -12,6 +12,7 @@ use directories::ProjectDirs;
 use druid::{ExtEventSink, Point, Rect, Size, Vec2, WidgetId};
 use lsp_types::Position;
 use serde::{Deserialize, Serialize};
+use xi_rope::Rope;
 
 use crate::{
     config::Config,
@@ -21,7 +22,7 @@ use crate::{
         SplitContent, SplitData,
     },
     document::{BufferContent, Document},
-    editor::EditorLocationNew,
+    editor::EditorLocation,
     split::SplitDirection,
 };
 
@@ -48,7 +49,7 @@ impl SplitContentInfo {
         &self,
         data: &mut LapceMainSplitData,
         parent_split: Option<WidgetId>,
-        editor_positions: &mut HashMap<PathBuf, Vec<(WidgetId, EditorLocationNew)>>,
+        editor_positions: &mut HashMap<PathBuf, Vec<(WidgetId, EditorLocation)>>,
         tab_id: WidgetId,
         config: &Config,
         event_sink: ExtEventSink,
@@ -92,7 +93,7 @@ impl EditorTabInfo {
         &self,
         data: &mut LapceMainSplitData,
         split: WidgetId,
-        editor_positions: &mut HashMap<PathBuf, Vec<(WidgetId, EditorLocationNew)>>,
+        editor_positions: &mut HashMap<PathBuf, Vec<(WidgetId, EditorLocation)>>,
         tab_id: WidgetId,
         config: &Config,
         event_sink: ExtEventSink,
@@ -134,6 +135,7 @@ impl EditorTabInfo {
 #[derive(Clone, Serialize, Deserialize)]
 pub enum EditorTabChildInfo {
     Editor(EditorInfo),
+    Settings,
 }
 
 impl EditorTabChildInfo {
@@ -141,7 +143,7 @@ impl EditorTabChildInfo {
         &self,
         data: &mut LapceMainSplitData,
         editor_tab_id: WidgetId,
-        editor_positions: &mut HashMap<PathBuf, Vec<(WidgetId, EditorLocationNew)>>,
+        editor_positions: &mut HashMap<PathBuf, Vec<(WidgetId, EditorLocation)>>,
         tab_id: WidgetId,
         config: &Config,
         event_sink: ExtEventSink,
@@ -156,7 +158,14 @@ impl EditorTabChildInfo {
                     config,
                     event_sink,
                 );
-                EditorTabChild::Editor(editor_data.view_id, editor_data.find_view_id)
+                EditorTabChild::Editor(
+                    editor_data.view_id,
+                    editor_data.editor_id,
+                    editor_data.find_view_id,
+                )
+            }
+            EditorTabChildInfo::Settings => {
+                EditorTabChild::Settings(WidgetId::next(), editor_tab_id)
             }
         }
     }
@@ -173,7 +182,7 @@ impl SplitInfo {
         &self,
         data: &mut LapceMainSplitData,
         parent_split: Option<WidgetId>,
-        editor_positions: &mut HashMap<PathBuf, Vec<(WidgetId, EditorLocationNew)>>,
+        editor_positions: &mut HashMap<PathBuf, Vec<(WidgetId, EditorLocation)>>,
         tab_id: WidgetId,
         config: &Config,
         event_sink: ExtEventSink,
@@ -213,6 +222,7 @@ pub struct WorkspaceInfo {
 pub struct WindowInfo {
     pub size: Size,
     pub pos: Point,
+    pub maximised: bool,
     pub tabs: TabsInfo,
 }
 
@@ -233,6 +243,7 @@ pub struct BufferInfo {
 #[derive(Clone, Serialize, Deserialize)]
 pub struct EditorInfo {
     pub content: BufferContent,
+    pub unsaved: Option<String>,
     pub scroll_offset: (f64, f64),
     pub position: Option<Position>,
 }
@@ -247,12 +258,13 @@ impl EditorInfo {
         &self,
         data: &mut LapceMainSplitData,
         editor_tab_id: WidgetId,
-        editor_positions: &mut HashMap<PathBuf, Vec<(WidgetId, EditorLocationNew)>>,
+        editor_positions: &mut HashMap<PathBuf, Vec<(WidgetId, EditorLocation)>>,
         tab_id: WidgetId,
         config: &Config,
         event_sink: ExtEventSink,
     ) -> LapceEditorData {
         let editor_data = LapceEditorData::new(
+            None,
             None,
             Some(editor_tab_id),
             self.content.clone(),
@@ -265,7 +277,7 @@ impl EditorInfo {
 
             editor_positions.get_mut(path).unwrap().push((
                 editor_data.view_id,
-                EditorLocationNew {
+                EditorLocation {
                     path: path.clone(),
                     position: self.position,
                     scroll_offset: Some(Vec2::new(
@@ -284,6 +296,19 @@ impl EditorInfo {
                     data.proxy.clone(),
                 ));
                 data.open_docs.insert(path.clone(), doc);
+            }
+        } else if let BufferContent::Scratch(id, _) = &self.content {
+            if !data.scratch_docs.contains_key(id) {
+                let mut doc = Document::new(
+                    self.content.clone(),
+                    tab_id,
+                    event_sink,
+                    data.proxy.clone(),
+                );
+                if let Some(text) = &self.unsaved {
+                    doc.reload(Rope::from(text), false);
+                }
+                data.scratch_docs.insert(*id, Arc::new(doc));
             }
         }
         data.insert_editor(Arc::new(editor_data.clone()), config);

@@ -1,15 +1,16 @@
 use std::time::Duration;
-use std::{iter::Iterator, sync::Arc, time::Instant};
+use std::{iter::Iterator, sync::Arc};
 
 use druid::TimerToken;
 use druid::{
     kurbo::{BezPath, Line},
     piet::{PietText, PietTextLayout, Text, TextLayout as _, TextLayoutBuilder},
-    BoxConstraints, Color, Command, Env, Event, EventCtx, FontFamily,
-    InternalLifeCycle, LayoutCtx, LifeCycle, LifeCycleCtx, MouseButton, MouseEvent,
-    PaintCtx, Point, Rect, RenderContext, Size, Target, UpdateCtx, Widget, WidgetId,
+    BoxConstraints, Color, Command, Env, Event, EventCtx, InternalLifeCycle,
+    LayoutCtx, LifeCycle, LifeCycleCtx, MouseButton, MouseEvent, PaintCtx, Point,
+    Rect, RenderContext, Size, Target, UpdateCtx, Widget, WidgetId,
 };
 use lapce_core::buffer::DiffLines;
+use lapce_core::command::EditCommand;
 use lapce_core::{
     command::FocusCommand,
     cursor::{ColPosition, CursorMode},
@@ -17,9 +18,10 @@ use lapce_core::{
     movement::Movement,
 };
 use lapce_data::command::CommandKind;
-use lapce_data::data::EditorView;
+use lapce_data::data::{EditorView, LapceData};
 use lapce_data::document::{BufferContent, LocalBufferKind};
 use lapce_data::keypress::KeyPressFocus;
+use lapce_data::menu::MenuKind;
 use lapce_data::{
     command::{
         LapceCommand, LapceUICommand, LapceWorkbenchCommand, LAPCE_UI_COMMAND,
@@ -30,10 +32,9 @@ use lapce_data::{
     menu::MenuItem,
     panel::PanelPosition,
 };
-use lsp_types::DiagnosticSeverity;
+use lsp_types::{CodeActionOrCommand, DiagnosticSeverity};
 
 pub mod container;
-pub mod diff_split;
 pub mod gutter;
 pub mod header;
 pub mod tab;
@@ -41,30 +42,11 @@ pub mod tab_header;
 pub mod tab_header_content;
 pub mod view;
 
-pub struct LapceUI {}
-
-#[derive(Copy, Clone)]
-pub struct EditorCount(Option<usize>);
-
-#[derive(Copy, Clone)]
-pub enum EditorOperator {
-    Delete(EditorCount),
-    Yank(EditorCount),
-}
-
-#[derive(Clone, Copy)]
-enum ClickKind {
-    Single,
-    Double,
-    Triple,
-    Quadruple,
-}
-
 pub struct LapceEditor {
     view_id: WidgetId,
+    editor_id: WidgetId,
     placeholder: Option<String>,
 
-    last_left_click: Option<(Instant, ClickKind, Point)>,
     mouse_pos: Point,
     /// A timer for listening for when the user has hovered for long enough to trigger showing
     /// of hover info (if there is any)
@@ -73,15 +55,29 @@ pub struct LapceEditor {
 }
 
 impl LapceEditor {
-    pub fn new(view_id: WidgetId) -> Self {
+    pub fn new(view_id: WidgetId, editor_id: WidgetId) -> Self {
         Self {
             view_id,
+            editor_id,
             placeholder: None,
-            last_left_click: None,
             mouse_pos: Point::ZERO,
             mouse_hover_timer: TimerToken::INVALID,
             drag_timer: TimerToken::INVALID,
         }
+    }
+
+    fn mouse_within_scroll(
+        &self,
+        editor_data: &LapceEditorBufferData,
+        point: Point,
+    ) -> bool {
+        let scroll_offset = editor_data.editor.scroll_offset;
+        let size = *editor_data.editor.size.borrow();
+
+        scroll_offset.x <= point.x
+            && point.x <= scroll_offset.x + size.width
+            && scroll_offset.y <= point.y
+            && point.y <= scroll_offset.y + size.height
     }
 
     fn mouse_drag(
@@ -89,9 +85,9 @@ impl LapceEditor {
         ctx: &mut EventCtx,
         editor_data: &LapceEditorBufferData,
         config: &Config,
-    ) {
+    ) -> bool {
         if !ctx.is_active() {
-            return;
+            return false;
         }
 
         let line_height = config.editor.line_height as f64;
@@ -137,8 +133,11 @@ impl LapceEditor {
                 Target::Widget(editor_data.view_id),
             ));
 
-            self.drag_timer = ctx.request_timer(Duration::from_millis(16));
+            self.drag_timer = ctx.request_timer(Duration::from_millis(16), None);
+            return true;
         }
+
+        false
     }
 
     fn mouse_move(
@@ -148,10 +147,15 @@ impl LapceEditor {
         editor_data: &mut LapceEditorBufferData,
         config: &Config,
     ) {
+        let mouse_actually_moved = self.mouse_pos != mouse_pos;
         self.mouse_pos = mouse_pos;
         self.mouse_hover_timer = TimerToken::INVALID;
 
-        self.mouse_drag(ctx, editor_data, config);
+        let dragged = self.mouse_drag(ctx, editor_data, config);
+
+        if !mouse_actually_moved && !dragged {
+            return;
+        }
 
         if ctx.is_active() {
             let (new_offset, _) = editor_data.doc.offset_of_point(
@@ -162,7 +166,7 @@ impl LapceEditor {
                 config,
             );
             let editor = Arc::make_mut(&mut editor_data.editor);
-            editor.new_cursor.set_offset(new_offset, true, false);
+            editor.cursor.set_offset(new_offset, true, false);
             return;
         }
 
@@ -173,9 +177,15 @@ impl LapceEditor {
             config.editor.font_size,
             config,
         );
-        if !editor_data.check_hover(ctx, offset, is_inside) && is_inside {
-            self.mouse_hover_timer =
-                ctx.request_timer(Duration::from_millis(config.editor.hover_delay));
+        let within_scroll = self.mouse_within_scroll(editor_data, mouse_pos);
+        if !editor_data.check_hover(ctx, offset, is_inside, within_scroll)
+            && is_inside
+            && within_scroll
+        {
+            self.mouse_hover_timer = ctx.request_timer(
+                Duration::from_millis(config.editor.hover_delay),
+                None,
+            );
         }
     }
 
@@ -190,13 +200,16 @@ impl LapceEditor {
         match mouse_event.button {
             MouseButton::Left => {
                 self.left_click(ctx, mouse_event, editor_data, config);
+                editor_data.get_code_actions(ctx);
                 editor_data.cancel_completion();
                 // TODO: Don't cancel over here, because it would good to allow the user to
                 // select text inside the hover data
                 editor_data.cancel_hover();
             }
             MouseButton::Right => {
+                self.mouse_hover_timer = TimerToken::INVALID;
                 self.right_click(ctx, editor_data, mouse_event, config);
+                editor_data.get_code_actions(ctx);
                 editor_data.cancel_completion();
                 editor_data.cancel_hover();
             }
@@ -212,29 +225,17 @@ impl LapceEditor {
         editor_data: &mut LapceEditorBufferData,
         config: &Config,
     ) {
-        let mut click_kind = ClickKind::Single;
-        if let Some((instant, kind, pos)) = self.last_left_click.as_ref() {
-            if pos == &mouse_event.pos && instant.elapsed().as_millis() < 500 {
-                click_kind = match kind {
-                    ClickKind::Single => ClickKind::Double,
-                    ClickKind::Double => ClickKind::Triple,
-                    ClickKind::Triple => ClickKind::Quadruple,
-                    ClickKind::Quadruple => ClickKind::Quadruple,
-                };
-            }
-        }
-        self.last_left_click = Some((Instant::now(), click_kind, mouse_event.pos));
-        match click_kind {
-            ClickKind::Single => {
+        match mouse_event.count {
+            1 => {
                 editor_data.single_click(ctx, mouse_event, config);
             }
-            ClickKind::Double => {
+            2 => {
                 editor_data.double_click(ctx, mouse_event, config);
             }
-            ClickKind::Triple => {
+            3 => {
                 editor_data.triple_click(ctx, mouse_event, config);
             }
-            ClickKind::Quadruple => {}
+            _ => {}
         }
     }
 
@@ -245,16 +246,32 @@ impl LapceEditor {
         mouse_event: &MouseEvent,
         config: &Config,
     ) {
-        editor_data.single_click(ctx, mouse_event, config);
+        let (offset, _) = editor_data.doc.offset_of_point(
+            ctx.text(),
+            editor_data.get_mode(),
+            mouse_event.pos,
+            config.editor.font_size,
+            config,
+        );
+
+        if !editor_data
+            .editor
+            .cursor
+            .edit_selection(editor_data.doc.buffer())
+            .contains(offset)
+        {
+            editor_data.single_click(ctx, mouse_event, config);
+        }
+
         let menu_items = vec![
-            MenuItem {
+            MenuKind::Item(MenuItem {
                 desc: None,
                 command: LapceCommand {
                     kind: CommandKind::Focus(FocusCommand::GotoDefinition),
                     data: None,
                 },
-            },
-            MenuItem {
+            }),
+            MenuKind::Item(MenuItem {
                 desc: None,
                 command: LapceCommand {
                     kind: CommandKind::Workbench(
@@ -262,7 +279,29 @@ impl LapceEditor {
                     ),
                     data: None,
                 },
-            },
+            }),
+            MenuKind::Separator,
+            MenuKind::Item(MenuItem {
+                desc: None,
+                command: LapceCommand {
+                    kind: CommandKind::Edit(EditCommand::ClipboardCut),
+                    data: None,
+                },
+            }),
+            MenuKind::Item(MenuItem {
+                desc: None,
+                command: LapceCommand {
+                    kind: CommandKind::Edit(EditCommand::ClipboardCopy),
+                    data: None,
+                },
+            }),
+            MenuKind::Item(MenuItem {
+                desc: None,
+                command: LapceCommand {
+                    kind: CommandKind::Edit(EditCommand::ClipboardPaste),
+                    data: None,
+                },
+            }),
         ];
 
         ctx.submit_command(Command::new(
@@ -271,7 +310,7 @@ impl LapceEditor {
                 ctx.to_window(mouse_event.pos),
                 Arc::new(menu_items),
             ),
-            Target::Auto,
+            Target::Widget(*editor_data.main_split.tab_id),
         ));
     }
 
@@ -285,7 +324,9 @@ impl LapceEditor {
         let line_height = data.config.editor.line_height as f64;
         let width = data.config.editor_char_width(text);
         match &data.editor.content {
-            BufferContent::File(_) => {
+            BufferContent::File(_)
+            | BufferContent::Scratch(..)
+            | BufferContent::Local(LocalBufferKind::Empty) => {
                 if data.editor.code_lens {
                     if let Some(syntax) = data.doc.syntax() {
                         let height =
@@ -293,8 +334,12 @@ impl LapceEditor {
                         Size::new(
                             (width * data.doc.buffer().max_len() as f64)
                                 .max(editor_size.width),
-                            (height as f64 - line_height).max(0.0)
-                                + editor_size.height,
+                            if data.config.editor.scroll_beyond_last_line {
+                                (height as f64 - line_height).max(0.0)
+                                    + editor_size.height
+                            } else {
+                                (height as f64).max(editor_size.height)
+                            },
                         )
                     } else {
                         let height = data.doc.buffer().num_lines()
@@ -302,8 +347,12 @@ impl LapceEditor {
                         Size::new(
                             (width * data.doc.buffer().max_len() as f64)
                                 .max(editor_size.width),
-                            (height as f64 - line_height).max(0.0)
-                                + editor_size.height,
+                            if data.config.editor.scroll_beyond_last_line {
+                                (height as f64 - line_height).max(0.0)
+                                    + editor_size.height
+                            } else {
+                                (height as f64).max(editor_size.height)
+                            },
                         )
                     }
                 } else if let Some(compare) = data.editor.compare.as_ref() {
@@ -321,17 +370,26 @@ impl LapceEditor {
                     Size::new(
                         (width * data.doc.buffer().max_len() as f64)
                             .max(editor_size.width),
-                        (line_height * lines as f64 - line_height).max(0.0)
-                            + editor_size.height,
+                        if data.config.editor.scroll_beyond_last_line {
+                            (line_height * lines as f64 - line_height).max(0.0)
+                                + editor_size.height
+                        } else {
+                            (line_height * lines as f64).max(editor_size.height)
+                        },
                     )
                 } else {
                     Size::new(
                         (width * data.doc.buffer().max_len() as f64)
                             .max(editor_size.width),
-                        (line_height * data.doc.buffer().num_lines() as f64
-                            - line_height)
-                            .max(0.0)
-                            + editor_size.height,
+                        if data.config.editor.scroll_beyond_last_line {
+                            (line_height * data.doc.buffer().num_lines() as f64
+                                - line_height)
+                                .max(0.0)
+                                + editor_size.height
+                        } else {
+                            (line_height * data.doc.buffer().num_lines() as f64)
+                                .max(editor_size.height)
+                        },
                     )
                 }
             }
@@ -417,7 +475,7 @@ impl LapceEditor {
         };
 
         let cursor_line = data.doc.buffer().line_of_offset(
-            data.editor.new_cursor.offset().min(data.doc.buffer().len()),
+            data.editor.cursor.offset().min(data.doc.buffer().len()),
         );
         let last_line = data.doc.buffer().line_of_offset(data.doc.buffer().len());
         let start_line =
@@ -508,19 +566,19 @@ impl LapceEditor {
         let char_width = text_layout.size().width;
         let y_shift = (line_height - text_layout.size().height) / 2.0;
 
-        if data.editor.content.is_input()
-            || (data.editor.compare.is_none() && !data.editor.code_lens)
-        {
-            // Self::paint_cursor(
-            //     data,
-            //     ctx,
-            //     is_focused,
-            //     self.placeholder.as_ref(),
-            //     char_width,
-            //     env,
-            // );
-            // Self::paint_find(data, ctx, char_width, env);
-        }
+        //if data.editor.content.is_input()
+        //    || (data.editor.compare.is_none() && !data.editor.code_lens)
+        //{
+        // Self::paint_cursor(
+        //     data,
+        //     ctx,
+        //     is_focused,
+        //     self.placeholder.as_ref(),
+        //     char_width,
+        //     env,
+        // );
+        // Self::paint_find(data, ctx, char_width, env);
+        //}
         let self_size = ctx.size();
         let rect = ctx.region().bounding_box();
         let start_line = (rect.y0 / line_height).floor() as usize;
@@ -533,7 +591,7 @@ impl LapceEditor {
                 let cursor_line = data
                     .doc
                     .buffer()
-                    .line_of_offset(data.editor.new_cursor.offset());
+                    .line_of_offset(data.editor.cursor.offset());
                 let mut line = 0;
                 for change in history.changes().iter() {
                     match change {
@@ -771,7 +829,10 @@ impl LapceEditor {
                 let text_layout = ctx
                     .text()
                     .new_text_layout(placeholder.to_string())
-                    .font(FontFamily::SYSTEM_UI, 13.0)
+                    .font(
+                        data.config.ui.font_family(),
+                        data.config.ui.font_size() as f64,
+                    )
                     .text_color(
                         data.config
                             .get_color_unchecked(LapceTheme::EDITOR_DIM)
@@ -796,7 +857,7 @@ impl LapceEditor {
         char_width: f64,
         line_height: f64,
     ) {
-        match &data.editor.new_cursor.mode {
+        match &data.editor.cursor.mode {
             CursorMode::Normal(_) => {}
             CursorMode::Visual { start, end, mode } => {
                 let (start_line, start_col) =
@@ -843,7 +904,7 @@ impl LapceEditor {
                     VisualMode::Blockwise => {
                         let max_col =
                             data.doc.buffer().line_end_col(actual_line, true);
-                        let right = match data.editor.new_cursor.horiz.as_ref() {
+                        let right = match data.editor.cursor.horiz.as_ref() {
                             Some(&ColPosition::End) => max_col,
                             _ => (end_col.max(start_col) + 1).min(max_col),
                         };
@@ -933,7 +994,7 @@ impl LapceEditor {
             }
         }
         if cursor_line == actual_line {
-            if let CursorMode::Normal(_) = &data.editor.new_cursor.mode {
+            if let CursorMode::Normal(_) = &data.editor.cursor.mode {
                 let size = ctx.size();
                 ctx.fill(
                     Rect::ZERO
@@ -943,21 +1004,21 @@ impl LapceEditor {
                         .get_color_unchecked(LapceTheme::EDITOR_CURRENT_LINE),
                 );
             }
-            match &data.editor.new_cursor.mode {
+            match &data.editor.cursor.mode {
                 CursorMode::Normal(_) | CursorMode::Visual { .. } => {
                     if is_focused {
                         let x0 = data
                             .doc
                             .point_of_offset(
                                 ctx.text(),
-                                data.editor.new_cursor.offset(),
+                                data.editor.cursor.offset(),
                                 data.config.editor.font_size,
                                 &data.config,
                             )
                             .x;
                         let (right_offset, _) = data.doc.move_offset(
                             ctx.text(),
-                            data.editor.new_cursor.offset(),
+                            data.editor.cursor.offset(),
                             None,
                             1,
                             &Movement::Right,
@@ -1007,7 +1068,7 @@ impl LapceEditor {
             + data.editor.scroll_offset.y)
             / line_height)
             .ceil() as usize;
-        match &data.editor.new_cursor.mode {
+        match &data.editor.cursor.mode {
             CursorMode::Normal(offset) => {
                 let line = data.doc.buffer().line_of_offset(*offset);
                 Self::paint_cursor_line(data, ctx, line, is_focused, placeholder);
@@ -1095,7 +1156,7 @@ impl LapceEditor {
                         }
                         VisualMode::Blockwise => {
                             let max_col = data.doc.buffer().line_end_col(line, true);
-                            let right = match data.editor.new_cursor.horiz.as_ref() {
+                            let right = match data.editor.cursor.horiz.as_ref() {
                                 Some(&ColPosition::End) => max_col,
                                 _ => (end_col.max(start_col) + 1).min(max_col),
                             };
@@ -1335,11 +1396,14 @@ impl LapceEditor {
             + data.editor.scroll_offset.y)
             / line_height)
             .ceil() as usize;
+
         let start_offset = data.doc.buffer().offset_of_line(start_line);
         let end_offset = data.doc.buffer().offset_of_line(end_line + 1);
-        let cursor_offset = data.editor.new_cursor.offset();
+        let cursor_offset = data.editor.cursor.offset();
 
-        data.doc.update_find(&data.find, start_line, end_line);
+        // Update the find with the whole document, so the count will be accurate in the widget
+        data.doc
+            .update_find(&data.find, 0, data.doc.buffer().last_line());
         if data.find.search_string.is_some() {
             for region in data
                 .doc
@@ -1454,7 +1518,7 @@ impl LapceEditor {
             .ceil() as usize;
 
         let mut current = None;
-        let cursor_offset = data.editor.new_cursor.offset();
+        let cursor_offset = data.editor.cursor.offset();
         if let Some(diagnostics) = data.diagnostics() {
             for diagnostic in diagnostics.iter() {
                 let start = diagnostic.diagnostic.range.start;
@@ -1538,11 +1602,14 @@ impl LapceEditor {
         }
 
         if let Some(diagnostic) = current {
-            if data.editor.new_cursor.is_normal() {
+            if data.editor.cursor.is_normal() {
                 let text_layout = ctx
                     .text()
                     .new_text_layout(diagnostic.diagnostic.message.clone())
-                    .font(FontFamily::SYSTEM_UI, 14.0)
+                    .font(
+                        data.config.ui.font_family(),
+                        data.config.ui.font_size() as f64,
+                    )
                     .text_color(
                         data.config
                             .get_color_unchecked(LapceTheme::EDITOR_FOREGROUND)
@@ -1564,7 +1631,10 @@ impl LapceEditor {
                                 let text_layout = ctx
                                     .text()
                                     .new_text_layout(i.message.clone())
-                                    .font(FontFamily::SYSTEM_UI, 14.0)
+                                    .font(
+                                        data.config.ui.font_family(),
+                                        data.config.ui.font_size() as f64,
+                                    )
                                     .text_color(
                                         data.config
                                             .get_color_unchecked(
@@ -1682,6 +1752,10 @@ impl LapceEditor {
 }
 
 impl Widget<LapceTabData> for LapceEditor {
+    fn id(&self) -> Option<WidgetId> {
+        Some(self.editor_id)
+    }
+
     fn event(
         &mut self,
         ctx: &mut EventCtx,
@@ -1691,6 +1765,7 @@ impl Widget<LapceTabData> for LapceEditor {
     ) {
         match event {
             Event::MouseMove(mouse_event) => {
+                ctx.set_handled();
                 ctx.set_cursor(&druid::Cursor::IBeam);
                 let doc = data.main_split.editor_doc(self.view_id);
                 let editor =
@@ -1723,7 +1798,7 @@ impl Widget<LapceTabData> for LapceEditor {
                     let doc = editor_data.doc.clone();
                     let (offset, _) = doc.offset_of_point(
                         ctx.text(),
-                        editor.new_cursor.get_mode(),
+                        editor.cursor.get_mode(),
                         self.mouse_pos,
                         data.config.editor.font_size,
                         &data.config,
@@ -1742,6 +1817,57 @@ impl Widget<LapceTabData> for LapceEditor {
                         &data.config,
                     );
                     data.update_from_editor_buffer_data(editor_data, &editor, &doc);
+                }
+            }
+            Event::Command(cmd) if cmd.is(LAPCE_UI_COMMAND) => {
+                let cmd = cmd.get_unchecked(LAPCE_UI_COMMAND);
+                if let LapceUICommand::ShowCodeActions(point) = cmd {
+                    let editor_data = data.editor_view_content(self.view_id);
+                    if let Some(actions) = editor_data.current_code_actions() {
+                        if !actions.is_empty() {
+                            let mut menu = druid::Menu::new("");
+
+                            for action in actions.iter() {
+                                let title = match action {
+                                    CodeActionOrCommand::Command(c) => {
+                                        c.title.clone()
+                                    }
+                                    CodeActionOrCommand::CodeAction(a) => {
+                                        a.title.clone()
+                                    }
+                                };
+                                let mut item = druid::MenuItem::new(title);
+                                item = item.command(Command::new(
+                                    LAPCE_UI_COMMAND,
+                                    LapceUICommand::RunCodeAction(action.clone()),
+                                    Target::Widget(editor_data.view_id),
+                                ));
+                                menu = menu.entry(item);
+                            }
+
+                            let point = point.unwrap_or_else(|| {
+                                let offset = editor_data.editor.cursor.offset();
+                                let (line, col) = editor_data
+                                    .doc
+                                    .buffer()
+                                    .offset_to_line_col(offset);
+                                let x = editor_data
+                                    .doc
+                                    .point_of_line_col(
+                                        ctx.text(),
+                                        line,
+                                        col,
+                                        editor_data.config.editor.font_size,
+                                        &editor_data.config,
+                                    )
+                                    .x;
+                                let y = editor_data.config.editor.line_height as f64
+                                    * (line + 1) as f64;
+                                ctx.to_window(Point::new(x, y))
+                            });
+                            ctx.show_context_menu::<LapceData>(menu, point);
+                        }
+                    }
                 }
             }
             _ => (),
@@ -1788,6 +1914,16 @@ impl Widget<LapceTabData> for LapceEditor {
     fn paint(&mut self, ctx: &mut PaintCtx, data: &LapceTabData, env: &Env) {
         let is_focused = data.focus == self.view_id;
         let data = data.editor_view_content(self.view_id);
+        let is_focused = is_focused
+            && (data
+                .editor
+                .last_cursor_instant
+                .borrow()
+                .elapsed()
+                .as_millis()
+                / 500)
+                % 2
+                == 0;
         self.paint_content(&data, ctx, is_focused, env);
     }
 }

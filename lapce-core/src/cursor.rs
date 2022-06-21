@@ -33,6 +33,16 @@ pub enum CursorMode {
     Insert(Selection),
 }
 
+impl CursorMode {
+    pub fn offset(&self) -> usize {
+        match &self {
+            CursorMode::Normal(offset) => *offset,
+            CursorMode::Visual { end, .. } => *end,
+            CursorMode::Insert(selection) => selection.get_cursor_offset(),
+        }
+    }
+}
+
 impl Cursor {
     pub fn new(
         mode: CursorMode,
@@ -48,11 +58,7 @@ impl Cursor {
     }
 
     pub fn offset(&self) -> usize {
-        match &self.mode {
-            CursorMode::Normal(offset) => *offset,
-            CursorMode::Visual { end, .. } => *end,
-            CursorMode::Insert(selection) => selection.get_cursor_offset(),
-        }
+        self.mode.offset()
     }
 
     pub fn is_normal(&self) -> bool {
@@ -314,9 +320,9 @@ impl Cursor {
                 } else if modify {
                     let mut new_selection = Selection::new();
                     if let Some(region) = selection.first() {
-                        let new_regoin =
+                        let new_region =
                             SelRegion::new(region.start(), offset, None);
-                        new_selection.add_region(new_regoin);
+                        new_selection.add_region(new_region);
                     } else {
                         new_selection
                             .add_region(SelRegion::new(offset, offset, None));

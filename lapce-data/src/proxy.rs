@@ -16,6 +16,7 @@ use lapce_proxy::dispatch::Dispatcher;
 use lapce_rpc::buffer::BufferId;
 use lapce_rpc::core::{CoreNotification, CoreRequest};
 use lapce_rpc::plugin::PluginDescription;
+use lapce_rpc::proxy::ProxyRequest;
 use lapce_rpc::source_control::FileDiff;
 use lapce_rpc::terminal::TermId;
 use lapce_rpc::RpcHandler;
@@ -28,7 +29,7 @@ use parking_lot::Mutex;
 use serde_json::json;
 use serde_json::Value;
 use xi_rope::spans::SpansBuilder;
-use xi_rope::{Interval, RopeDelta};
+use xi_rope::{Interval, Rope, RopeDelta};
 
 use crate::command::LapceUICommand;
 use crate::command::LAPCE_UI_COMMAND;
@@ -65,7 +66,6 @@ impl Handler for LapceProxy {
     type Request = CoreRequest;
 
     fn handle_notification(&mut self, rpc: Self::Notification) -> ControlFlow {
-        // println!("handle noitification {rpc:?}");
         use lapce_rpc::core::CoreNotification::*;
         match rpc {
             SemanticStyles {
@@ -98,14 +98,24 @@ impl Handler for LapceProxy {
                     );
                 });
             }
-            ReloadBuffer {
-                buffer_id,
-                new_content,
-                rev,
-            } => {
+            OpenFileChanged { path, content } => {
                 let _ = self.event_sink.submit_command(
                     LAPCE_UI_COMMAND,
-                    LapceUICommand::ReloadBuffer(buffer_id, rev, new_content),
+                    LapceUICommand::OpenFileChanged {
+                        path,
+                        content: Rope::from(content),
+                    },
+                    Target::Widget(self.tab_id),
+                );
+            }
+            ReloadBuffer { path, content, rev } => {
+                let _ = self.event_sink.submit_command(
+                    LAPCE_UI_COMMAND,
+                    LapceUICommand::ReloadBuffer {
+                        path,
+                        rev,
+                        content: Rope::from(content),
+                    },
                     Target::Widget(self.tab_id),
                 );
             }
@@ -165,6 +175,13 @@ impl Handler for LapceProxy {
                 );
             }
             ListDir { .. } | DiffFiles { .. } => {}
+            FileChange { event } => {
+                let _ = self.event_sink.submit_command(
+                    LAPCE_UI_COMMAND,
+                    LapceUICommand::FileChange(event),
+                    Target::Widget(self.tab_id),
+                );
+            }
         }
         ControlFlow::Continue
     }
@@ -262,13 +279,10 @@ impl LapceProxy {
                 .join(&proxy_filename);
             if !local_proxy_file.exists() {
                 let url = format!("https://github.com/lapce/lapce/releases/download/v{VERSION}/lapce-proxy-linux.gz");
-                let mut data = ureq::get(&url)
-                    .call()
-                    .expect("request failed")
-                    .into_reader();
+                let mut resp = reqwest::blocking::get(url).expect("request failed");
                 let mut out = std::fs::File::create(&local_proxy_file)
                     .expect("failed to create file");
-                let mut gz = GzDecoder::new(&mut data);
+                let mut gz = GzDecoder::new(&mut resp);
                 std::io::copy(&mut gz, &mut out).expect("failed to copy content");
             }
 
@@ -378,6 +392,15 @@ impl LapceProxy {
         )
     }
 
+    pub fn git_checkout(&self, branch: &str) {
+        self.rpc.send_rpc_notification(
+            "git_checkout",
+            &json!({
+                "branch": branch,
+            }),
+        )
+    }
+
     pub fn install_plugin(&self, plugin: &PluginDescription) {
         self.rpc
             .send_rpc_notification("install_plugin", &json!({ "plugin": plugin }));
@@ -415,6 +438,23 @@ impl LapceProxy {
             &json!({ "buffer_id": buffer_id, "path": path }),
             f,
         );
+    }
+
+    pub fn save_buffer_as(
+        &self,
+        buffer_id: BufferId,
+        path: PathBuf,
+        rev: u64,
+        content: String,
+        f: Box<dyn Callback>,
+    ) {
+        let request = ProxyRequest::SaveBufferAs {
+            buffer_id,
+            path,
+            rev,
+            content,
+        };
+        self.rpc.send_rpc_request_value_async(request, f);
     }
 
     pub fn update(&self, buffer_id: BufferId, delta: &RopeDelta, rev: u64) {

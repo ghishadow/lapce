@@ -1,35 +1,24 @@
 use druid::{
     piet::{Text, TextAttribute, TextLayout as PietTextLayout, TextLayoutBuilder},
-    BoxConstraints, Command, Cursor, Data, Env, Event, EventCtx, FontFamily,
-    FontWeight, LayoutCtx, LifeCycle, LifeCycleCtx, MouseEvent, PaintCtx, Point,
-    RenderContext, Size, Target, UpdateCtx, Widget, WidgetExt, WidgetId,
+    BoxConstraints, Command, Cursor, Data, Env, Event, EventCtx, FontWeight,
+    LayoutCtx, LifeCycle, LifeCycleCtx, MouseEvent, PaintCtx, Point, RenderContext,
+    Size, Target, UpdateCtx, Widget, WidgetExt, WidgetId,
 };
 use lapce_data::{
     command::{LapceUICommand, LAPCE_UI_COMMAND},
     config::LapceTheme,
     data::{LapceTabData, PanelKind},
-    editor::EditorLocationNew,
-    search::Match,
+    editor::EditorLocation,
     split::SplitDirection,
 };
-use std::{collections::HashMap, path::PathBuf, sync::Arc};
 
 use crate::{
     editor::view::LapceEditorView,
     panel::{LapcePanel, PanelHeaderKind},
-    scroll::LapceScrollNew,
-    split::LapceSplitNew,
-    svg::file_svg_new,
+    scroll::LapceScroll,
+    split::LapceSplit,
+    svg::file_svg,
 };
-
-#[derive(Clone)]
-pub struct SearchData {
-    pub active: WidgetId,
-    pub widget_id: WidgetId,
-    pub split_id: WidgetId,
-    pub editor_view_id: WidgetId,
-    pub matches: Arc<HashMap<PathBuf, Vec<Match>>>,
-}
 
 pub fn new_search_panel(data: &LapceTabData) -> LapcePanel {
     let editor_data = data
@@ -37,26 +26,27 @@ pub fn new_search_panel(data: &LapceTabData) -> LapcePanel {
         .editors
         .get(&data.search.editor_view_id)
         .unwrap();
-    let input = LapceEditorView::new(editor_data.view_id, None)
+    let input = LapceEditorView::new(editor_data.view_id, WidgetId::next(), None)
         .hide_header()
         .hide_gutter()
         .padding((15.0, 15.0));
-    let split = LapceSplitNew::new(data.search.split_id)
+    let split = LapceSplit::new(data.search.split_id)
         .horizontal()
         .with_child(input.boxed(), None, 100.0)
         .with_flex_child(
-            LapceScrollNew::new(SearchContent::new().boxed())
+            LapceScroll::new(SearchContent::new().boxed())
                 .vertical()
                 .boxed(),
             None,
             1.0,
-        );
+        )
+        .hide_border();
     LapcePanel::new(
         PanelKind::Search,
         data.search.widget_id,
         data.search.split_id,
         SplitDirection::Vertical,
-        PanelHeaderKind::Simple("Search".to_string()),
+        PanelHeaderKind::Simple("Search".into()),
         vec![(
             data.search.split_id,
             PanelHeaderKind::None,
@@ -66,56 +56,7 @@ pub fn new_search_panel(data: &LapceTabData) -> LapcePanel {
     )
 }
 
-impl SearchData {
-    pub fn new() -> Self {
-        let editor_view_id = WidgetId::next();
-        Self {
-            active: editor_view_id,
-            widget_id: WidgetId::next(),
-            split_id: WidgetId::next(),
-            editor_view_id,
-            matches: Arc::new(HashMap::new()),
-        }
-    }
-
-    pub fn new_panel(&self, data: &LapceTabData) -> LapcePanel {
-        let editor_data = data
-            .main_split
-            .editors
-            .get(&data.search.editor_view_id)
-            .unwrap();
-        let input = LapceEditorView::new(editor_data.view_id, None)
-            .hide_header()
-            .hide_gutter()
-            .padding((15.0, 15.0));
-        let split = LapceSplitNew::new(self.split_id)
-            .horizontal()
-            .with_child(input.boxed(), None, 55.0)
-            .with_flex_child(
-                LapceScrollNew::new(SearchContent::new().boxed())
-                    .vertical()
-                    .boxed(),
-                None,
-                1.0,
-            );
-        LapcePanel::new(
-            PanelKind::Search,
-            self.widget_id,
-            self.split_id,
-            SplitDirection::Vertical,
-            PanelHeaderKind::Simple("Search".to_string()),
-            vec![(self.split_id, PanelHeaderKind::None, split.boxed(), None)],
-        )
-    }
-}
-
-impl Default for SearchData {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-pub struct SearchContent {
+struct SearchContent {
     mouse_pos: Point,
     line_height: f64,
 }
@@ -150,7 +91,7 @@ impl SearchContent {
                         LAPCE_UI_COMMAND,
                         LapceUICommand::JumpToLocation(
                             None,
-                            EditorLocationNew {
+                            EditorLocation {
                                 path: path.clone(),
                                 position: Some(lsp_types::Position {
                                     line: *line_number as u32 - 1,
@@ -261,7 +202,7 @@ impl Widget<LapceTabData> for SearchContent {
                 continue;
             }
 
-            let svg = file_svg_new(path);
+            let svg = file_svg(path);
             let rect = Size::new(self.line_height, self.line_height)
                 .to_rect()
                 .with_origin(Point::new(0.0, self.line_height * i as f64))
@@ -273,7 +214,10 @@ impl Widget<LapceTabData> for SearchContent {
                 .new_text_layout(
                     path.file_name().unwrap().to_str().unwrap().to_string(),
                 )
-                .font(FontFamily::SYSTEM_UI, 13.0)
+                .font(
+                    data.config.ui.font_family(),
+                    data.config.ui.font_size() as f64,
+                )
                 .text_color(
                     data.config
                         .get_color_unchecked(LapceTheme::EDITOR_FOREGROUND)
@@ -308,7 +252,10 @@ impl Widget<LapceTabData> for SearchContent {
                 let text_layout = ctx
                     .text()
                     .new_text_layout(folder)
-                    .font(FontFamily::SYSTEM_UI, 13.0)
+                    .font(
+                        data.config.ui.font_family(),
+                        data.config.ui.font_size() as f64,
+                    )
                     .text_color(
                         data.config
                             .get_color_unchecked(LapceTheme::EDITOR_DIM)
@@ -336,7 +283,10 @@ impl Widget<LapceTabData> for SearchContent {
                     let mut text_layout = ctx
                         .text()
                         .new_text_layout(format!("{line_number}: {line}"))
-                        .font(FontFamily::SYSTEM_UI, 13.0)
+                        .font(
+                            data.config.ui.font_family(),
+                            data.config.ui.font_size() as f64,
+                        )
                         .text_color(
                             data.config
                                 .get_color_unchecked(LapceTheme::EDITOR_FOREGROUND)
