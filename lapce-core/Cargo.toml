@@ -40,6 +40,7 @@ tree-sitter-haxe = { git = "https://github.com/VixieTSQ/tree-sitter-haxe", versi
 tree-sitter-hcl = { git = "https://github.com/VixieTSQ/tree-sitter-hcl", version = "0.0.1", optional = true }
 tree-sitter-scss = { git = "https://github.com/VixieTSQ/tree-sitter-scss", version = "0.0.1", branch = "patch-1", optional = true }
 tree-sitter-hare = { version = "0.20.7", optional = true }
+tree-sitter-d = { git = "https://github.com/syntacti/tree-sitter-d.git", branch = "master", optional = true  }
 lsp-types = { version = "0.89.2", features = ["proposed"] }
 xi-rope = { git = "https://github.com/lapce/xi-editor", features = ["serde"] }
 lapce-rpc = { path = "../lapce-rpc" }
@@ -74,3 +75,4 @@ lang-haxe = ["dep:tree-sitter-haxe"]
 lang-hcl = ["dep:tree-sitter-hcl"]
 lang-scss = ["dep:tree-sitter-scss"]
 lang-hare = ["dep:tree-sitter-hare"]
+lang-d = ["dep:tree-sitter-d"]

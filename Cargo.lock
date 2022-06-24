@@ -2178,6 +2178,7 @@ dependencies = [
  "tree-sitter",
  "tree-sitter-c",
  "tree-sitter-cpp",
+ "tree-sitter-d",
  "tree-sitter-elixir",
  "tree-sitter-elm",
  "tree-sitter-glimmer",
@@ -4582,6 +4583,15 @@ name = "tree-sitter-cpp"
 version = "0.20.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8a869e3c5cef4e5db4e9ab16a8dc84d73010e60ada14cdc60d2f6d8aed17779d"
+dependencies = [
+ "cc",
+ "tree-sitter",
+]
+
+[[package]]
+name = "tree-sitter-d"
+version = "0.0.1"
+source = "git+https://github.com/syntacti/tree-sitter-d.git?branch=master#c0ed562f95358a2b2466b1ac9454b76f60187787"
 dependencies = [
  "cc",
  "tree-sitter",
