@@ -154,6 +154,8 @@ pub enum LapceLanguage {
     Hare,
     #[cfg(feature = "lang-css")]
     Css,
+    #[cfg(feature = "lang-nu")]
+    Nu,
 }
 
 // NOTE: Elements in the array must be in the same order as the enum variants of
@@ -290,7 +292,7 @@ const LANGUAGES: &[SyntaxProperties] = &[
         comment: "//",
         indent: "    ",
         code_lens: (DEFAULT_CODE_LENS_LIST, DEFAULT_CODE_LENS_IGNORE_LIST),
-        extensions: &["c"],
+        extensions: &["c", "h"],
     },
     #[cfg(feature = "lang-cpp")]
     SyntaxProperties {
@@ -471,6 +473,16 @@ const LANGUAGES: &[SyntaxProperties] = &[
         indent: "  ",
         code_lens: (DEFAULT_CODE_LENS_LIST, DEFAULT_CODE_LENS_IGNORE_LIST),
         extensions: &["css"],
+    },
+    #[cfg(feature = "lang-nu")]
+    SyntaxProperties {
+        id: LapceLanguage::Nu,
+        language: tree_sitter_nu::language,
+        highlight: tree_sitter_nu::HIGHLIGHTS_QUERY,
+        comment: "/*",
+        indent: "  ",
+        code_lens: (DEFAULT_CODE_LENS_LIST, DEFAULT_CODE_LENS_IGNORE_LIST),
+        extensions: &["nu"],
     },
 ];
 

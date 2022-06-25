@@ -42,6 +42,7 @@ tree-sitter-scss = { git = "https://github.com/VixieTSQ/tree-sitter-scss", versi
 tree-sitter-hare = { version = "0.20.7", optional = true }
 # switch to upstream version after this is merged https://github.com/tree-sitter/tree-sitter-css/pull/22
 tree-sitter-css = { git = "https://github.com/syntacti/tree-sitter-css", branch = "master", optional = true }
+tree-sitter-nu = { git = "https://github.com/syntacti/tree-sitter-nu", branch = "main", optional = true }
 lsp-types = { version = "0.89.2", features = ["proposed"] }
 xi-rope = { git = "https://github.com/lapce/xi-editor", features = ["serde"] }
 lapce-rpc = { path = "../lapce-rpc" }
@@ -77,3 +78,4 @@ lang-hcl = ["dep:tree-sitter-hcl"]
 lang-scss = ["dep:tree-sitter-scss"]
 lang-hare = ["dep:tree-sitter-hare"]
 lang-css = ["dep:tree-sitter-css"]
+lang-nu = ["dep:tree-sitter-nu"]

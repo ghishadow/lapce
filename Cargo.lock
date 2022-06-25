@@ -2221,6 +2221,7 @@ dependencies = [
  "tree-sitter-javascript",
  "tree-sitter-json",
  "tree-sitter-md",
+ "tree-sitter-nu",
  "tree-sitter-ocaml",
  "tree-sitter-php",
  "tree-sitter-python",
@@ -4706,6 +4707,15 @@ dependencies = [
 name = "tree-sitter-md"
 version = "0.0.1"
 source = "git+https://github.com/MDeiml/tree-sitter-markdown.git#be3e08acfd85bd87d85f41fde74fdcec25f76dbe"
+dependencies = [
+ "cc",
+ "tree-sitter",
+]
+
+[[package]]
+name = "tree-sitter-nu"
+version = "0.0.1"
+source = "git+https://github.com/syntacti/tree-sitter-nu?branch=main#5ee12d4192d657c45b51d8ae8a0bc6608b57d43c"
 dependencies = [
  "cc",
  "tree-sitter",
