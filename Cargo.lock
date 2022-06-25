@@ -2204,6 +2204,7 @@ dependencies = [
  "strum_macros 0.24.0",
  "thiserror",
  "tree-sitter",
+ "tree-sitter-bash",
  "tree-sitter-c",
  "tree-sitter-cpp",
  "tree-sitter-css",
@@ -4546,6 +4547,15 @@ checksum = "549a9faf45679ad50b7f603253635598cf5e007d8ceb806a23f95355938f76a0"
 dependencies = [
  "cc",
  "regex",
+]
+
+[[package]]
+name = "tree-sitter-bash"
+version = "0.19.0"
+source = "git+https://github.com/syntacti/tree-sitter-bash?branch=master#ba3adca745943b71b0c84bb4e4977788cc6a867b"
+dependencies = [
+ "cc",
+ "tree-sitter",
 ]
 
 [[package]]
