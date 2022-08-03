@@ -225,7 +225,7 @@ const LANGUAGES: &[SyntaxProperties] = &[
     SyntaxProperties {
         id: LapceLanguage::Typescript,
         language: tree_sitter_typescript::language_typescript,
-        highlight: tree_sitter_typescript::HIGHLIGHT_QUERY,
+        highlight: include_str!("../queries/typescript/highlights.scm"),
         comment: "//",
         indent: "    ",
         code_lens: (&["source_file", "program"], &["source_file"]),
@@ -235,7 +235,7 @@ const LANGUAGES: &[SyntaxProperties] = &[
     SyntaxProperties {
         id: LapceLanguage::Tsx,
         language: tree_sitter_typescript::language_tsx,
-        highlight: tree_sitter_typescript::HIGHLIGHT_QUERY,
+        highlight: include_str!("../queries/typescript/highlights.scm"),
         comment: "//",
         indent: "    ",
         code_lens: (&["source_file", "program"], &["source_file"]),
@@ -306,7 +306,7 @@ const LANGUAGES: &[SyntaxProperties] = &[
     SyntaxProperties {
         id: LapceLanguage::Cpp,
         language: tree_sitter_cpp::language,
-        highlight: tree_sitter_cpp::HIGHLIGHT_QUERY,
+        highlight: include_str!("../queries/cpp/highlights.scm"),
         comment: "//",
         indent: "    ",
         code_lens: (DEFAULT_CODE_LENS_LIST, DEFAULT_CODE_LENS_IGNORE_LIST),
@@ -326,7 +326,7 @@ const LANGUAGES: &[SyntaxProperties] = &[
     SyntaxProperties {
         id: LapceLanguage::Markdown,
         language: tree_sitter_md::language,
-        highlight: tree_sitter_md::HIGHLIGHT_QUERY,
+        highlight: tree_sitter_md::HIGHLIGHT_QUERY_BLOCK,
         comment: "",
         indent: "    ",
         code_lens: (DEFAULT_CODE_LENS_LIST, DEFAULT_CODE_LENS_IGNORE_LIST),
