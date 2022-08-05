@@ -50,6 +50,7 @@ pub const SCOPES: &[&str] = &[
     "string.escape",
     "string.special",
     "string.regexp",
+    "string.special.symbol",
     "field",
     "constant.builtin",
     "number",
@@ -61,6 +62,7 @@ pub const SCOPES: &[&str] = &[
     "namespace",
     "keyword.control",
     "keyword.control.import",
+    "keyword.control.conditional",
     "keyword.storage.type",
     "keyword.storage.modifier",
     "keyword.operator",
@@ -83,7 +85,11 @@ pub const SCOPES: &[&str] = &[
     "markup.list.numbered",
     "markup.list.unnumbered",
     "constant.character.escape",
+    "constant.numeric.integer",
     "function.macro",
+    "keyword.control.exception",
+    "keyword.control.repeat" ,
+    "constant.builtin.boolean",
 ];
 
 /// Indicates which highlight should be applied to a region of source code.
