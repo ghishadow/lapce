@@ -88,8 +88,11 @@ pub const SCOPES: &[&str] = &[
     "constant.numeric.integer",
     "function.macro",
     "keyword.control.exception",
-    "keyword.control.repeat" ,
+    "function.call",
+    "keyword.control.repeat",
+    "keyword.return",
     "constant.builtin.boolean",
+    "include",
 ];
 
 /// Indicates which highlight should be applied to a region of source code.

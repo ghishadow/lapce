@@ -296,7 +296,7 @@ const LANGUAGES: &[SyntaxProperties] = &[
     SyntaxProperties {
         id: LapceLanguage::C,
         language: tree_sitter_c::language,
-        highlight: tree_sitter_c::HIGHLIGHT_QUERY,
+        highlight: include_str!("../queries/c/highlights.scm"),
         comment: "//",
         indent: "    ",
         code_lens: (DEFAULT_CODE_LENS_LIST, DEFAULT_CODE_LENS_IGNORE_LIST),
