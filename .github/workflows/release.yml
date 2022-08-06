@@ -43,10 +43,20 @@ jobs:
         shell: pwsh
         run: |
           Compress-Archive ./target/release-lto/lapce.exe ./Lapce-windows-portable.zip
+      - name: Create lapce-proxy archive
+        shell: pwsh
+        run: |
+          $file = [System.IO.File]::Open((Join-Path $PWD '.\target\release-lto\lapce-proxy.exe'), [System.IO.FileMode]::Open)
+          $archive = [System.IO.File]::Create((Join-Path $PWD '.\lapce-proxy-windows-x86_64.gz'))
+          $compressor = [System.IO.Compression.GZipStream]::new($archive, [System.IO.Compression.CompressionMode]::Compress)
+          $file.CopyTo($compressor)
+          Start-Sleep -Seconds 10
+          $compressor.close()
       - uses: actions/upload-artifact@v3
         with:
           name: lapce-windows
           path: |
+            ./lapce-proxy-windows-*.gz
             ./Lapce-windows-portable.zip
             ./Lapce-windows.msi
           retention-days: 1
@@ -178,6 +188,10 @@ jobs:
       - name: Rename
         run: |
           cp ./target/release-lto/macos/Lapce.dmg ./target/release-lto/macos/Lapce-macos.dmg
+      - name: Gzip lapce-proxy
+        run: |
+          gzip -c ./target/x86_64-apple-darwin/release-lto/lapce-proxy > ./lapce-proxy-darwin-x86_64.gz
+          gzip -c ./target/aarch64-apple-darwin/release-lto/lapce-proxy > ./lapce-proxy-darwin-aarch64.gz
       - name: "Notarize Release Build"
         run: |
           npx notarize-cli --file ./target/release-lto/macos/Lapce-macos.dmg --bundle-id io.lapce --asc-provider CYSGAZFR8D
@@ -189,6 +203,7 @@ jobs:
         with:
           name: lapce-macos
           path: |
+            ./lapce-proxy-darwin-*.gz
             ./target/release-lto/macos/Lapce-macos.dmg
           retention-days: 1
           
