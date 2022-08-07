@@ -93,6 +93,10 @@ pub const SCOPES: &[&str] = &[
     "keyword.return",
     "constant.builtin.boolean",
     "include",
+    "method.call",
+    "float",
+    "boolean",
+    "character",
 ];
 
 /// Indicates which highlight should be applied to a region of source code.
