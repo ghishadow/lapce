@@ -57,8 +57,6 @@ magenta = "#A626A4"
 "builtinType" = "$cyan"
 "escape" = "$cyan"
 "embedded" = "$cyan"
-
-"embedded" = "$cyan"
 "exception" = "$blue"
 "repeat" = "$magenta"
 "conditional" = "$blue"
