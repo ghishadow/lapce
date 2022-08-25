@@ -10,9 +10,10 @@ use lapce_core::command::{
     EditCommand, FocusCommand, MotionModeCommand, MoveCommand, MultiSelectionCommand,
 };
 use lapce_core::syntax::Syntax;
+use lapce_rpc::plugin::{PluginId, VoltInfo, VoltMetadata};
 use lapce_rpc::{
-    buffer::BufferId, file::FileNodeItem, plugin::PluginDescription,
-    source_control::DiffInfo, style::Style, terminal::TermId,
+    buffer::BufferId, file::FileNodeItem, source_control::DiffInfo, style::Style,
+    terminal::TermId,
 };
 use lsp_types::{
     CodeActionOrCommand, CodeActionResponse, CompletionItem, CompletionResponse,
@@ -30,6 +31,7 @@ use crate::document::BufferContent;
 use crate::editor::{EditorPosition, Line, LineCol};
 use crate::menu::MenuKind;
 use crate::rich_text::RichText;
+use crate::update::ReleaseInfo;
 use crate::{
     data::{EditorTabChild, SplitContent},
     editor::EditorLocation,
@@ -404,13 +406,9 @@ pub enum LapceWorkbenchCommand {
     #[strum(serialize = "toggle_inlay_hints")]
     #[strum(message = "Toggle Inlay Hints")]
     ToggleInlayHints,
-}
 
-#[derive(Debug, Clone)]
-pub enum PluginLoadingStatus {
-    Loading,
-    Failed,
-    Ok(Vec<PluginDescription>),
+    #[strum(serialize = "restart_to_update")]
+    RestartToUpdate,
 }
 
 #[derive(Debug)]
@@ -467,11 +465,12 @@ pub enum LapceUICommand {
     SetWorkspace(LapceWorkspace),
     SetTheme(String, bool),
     UpdateKeymap(KeyMap, Vec<KeyPress>),
+    OpenURI(String),
     OpenFile(PathBuf),
     OpenFileDiff(PathBuf, String),
     CancelCompletion(usize),
     ResolveCompletion(BufferId, u64, usize, Box<CompletionItem>),
-    UpdateCompletion(usize, String, CompletionResponse),
+    UpdateCompletion(usize, String, CompletionResponse, PluginId),
     UpdateHover(usize, Arc<Vec<RichText>>),
     UpdateInlayHints {
         path: PathBuf,
@@ -484,6 +483,7 @@ pub enum LapceUICommand {
     ShowCodeActions(Option<Point>),
     Hide,
     ResignFocus,
+    UpdateLatestRelease(ReleaseInfo),
     Focus,
     ChildrenChanged,
     EnsureEditorTabActiveVisible,
@@ -505,15 +505,14 @@ pub enum LapceUICommand {
     UpdatePickerPwd(PathBuf),
     UpdatePickerItems(PathBuf, HashMap<PathBuf, FileNodeItem>),
     UpdateExplorerItems(PathBuf, HashMap<PathBuf, FileNodeItem>, bool),
-    UpdateInstalledPlugins(HashMap<String, PluginDescription>),
-    UpdatePluginDescriptions(Vec<PluginDescription>),
-    UpdateInstalledPluginDescriptions(PluginLoadingStatus),
-    UpdateUninstalledPluginDescriptions(PluginLoadingStatus),
-    UpdatePluginInstallationChange(HashMap<String, PluginDescription>),
-    UpdateDisabledPlugins(HashMap<String, PluginDescription>),
-    DisablePlugin(PluginDescription),
-    EnablePlugin(PluginDescription),
-    RemovePlugin(PluginDescription),
+    LoadPlugins(Vec<VoltInfo>),
+    LoadPluginsFailed,
+    VoltInstalled(VoltMetadata),
+    VoltRemoved(VoltInfo),
+    EnableVolt(VoltInfo),
+    DisableVolt(VoltInfo),
+    EnableVoltWorkspace(VoltInfo),
+    DisableVoltWorkspace(VoltInfo),
     RequestLayout,
     RequestPaint,
     ResetFade,
@@ -528,6 +527,7 @@ pub enum LapceUICommand {
     NextEditorTab,
     PreviousEditorTab,
     FilterItems,
+    RestartToUpdate(PathBuf, ReleaseInfo),
     NewWindow(WindowId),
     ReloadWindow,
     CloseBuffers(Vec<BufferId>),
@@ -650,6 +650,7 @@ pub enum LapceUICommand {
         /// Whether it should name/rename the file with the input data
         apply_naming: bool,
     },
+    FileExplorerRefresh,
     SetLanguage(String),
 }
 

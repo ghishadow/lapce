@@ -17,7 +17,7 @@ use lapce_data::{
 use crate::logging::override_log_levels;
 use crate::window::LapceWindow;
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd"))]
 const LOGO_PNG: &[u8] = include_bytes!("../../extra/images/logo.png");
 #[cfg(target_os = "windows")]
 const LOGO_ICO: &[u8] = include_bytes!("../../extra/windows/lapce.ico");
@@ -31,10 +31,10 @@ pub fn launch() {
     let mut path = None;
     if args.len() > 1 {
         args.next();
-        for arg in args {
+        if let Some(arg) = args.next() {
             match arg.as_str() {
                 "-v" | "--version" => {
-                    println!("lapce v{VERSION}");
+                    println!("lapce {}", *VERSION);
                     return;
                 }
                 "-h" | "--help" => {
@@ -63,18 +63,34 @@ pub fn launch() {
                 message
             ))
         })
-        .level(if cfg!(debug_assertions) {
-            log::LevelFilter::Warn
-        } else {
-            log::LevelFilter::Off
-        })
-        .chain(std::io::stderr());
+        .level(log::LevelFilter::Debug)
+        .chain(override_log_levels(
+            fern::Dispatch::new()
+                .level(if cfg!(debug_assertions) {
+                    log::LevelFilter::Warn
+                } else {
+                    log::LevelFilter::Off
+                })
+                .chain(std::io::stderr()),
+        ));
 
     if let Some(log_file) = Config::log_file().and_then(|f| fern::log_file(f).ok()) {
-        log_dispatch = log_dispatch.chain(log_file);
+        log_dispatch = log_dispatch.chain(
+            fern::Dispatch::new()
+                .level(log::LevelFilter::Debug)
+                .level_for("lapce_data::keypress", log::LevelFilter::Off)
+                .level_for("sled", log::LevelFilter::Off)
+                .level_for("tracing", log::LevelFilter::Off)
+                .level_for("druid::core", log::LevelFilter::Off)
+                .level_for("druid::box_constraints", log::LevelFilter::Off)
+                .level_for("cranelift_codegen", log::LevelFilter::Off)
+                .level_for("wasmer_compiler_cranelift", log::LevelFilter::Off)
+                .level_for("regalloc", log::LevelFilter::Off)
+                .level_for("hyper::proto", log::LevelFilter::Off)
+                .chain(log_file),
+        );
     }
 
-    log_dispatch = override_log_levels(log_dispatch);
     match log_dispatch.apply() {
         Ok(()) => (),
         Err(e) => eprintln!("Initialising logging failed {e:?}"),
@@ -138,7 +154,7 @@ fn window_icon() -> Option<druid::Icon> {
     None
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd"))]
 fn window_icon() -> Option<druid::Icon> {
     let image = image::load_from_memory(LOGO_PNG)
         .expect("Invalid Icon")
@@ -235,45 +251,66 @@ impl AppDelegate<LapceData> for LapceAppDelegate {
         data: &mut LapceData,
         _env: &Env,
     ) -> druid::Handled {
-        if let Some(LapceUICommand::NewWindow(from_window_id)) =
-            cmd.get(LAPCE_UI_COMMAND)
-        {
-            let (size, pos) = data
-                .windows
-                .get(from_window_id)
-                // If maximised, use default dimensions instead
-                .filter(|win| !win.maximised)
-                .map(|win| (win.size, win.pos + (50.0, 50.0)))
-                .unwrap_or((Size::new(800.0, 600.0), Point::new(0.0, 0.0)));
-            let info = WindowInfo {
-                size,
-                pos,
-                maximised: false,
-                tabs: TabsInfo {
-                    active_tab: 0,
-                    workspaces: vec![],
-                },
-            };
-            let mut window_data = LapceWindowData::new(
-                data.keypress.clone(),
-                data.panel_orders.clone(),
-                ctx.get_external_handle(),
-                &info,
-                data.db.clone(),
-            );
-            let root = build_window(&mut window_data);
-            let window_id = window_data.window_id;
-            data.windows.insert(window_id, window_data.clone());
-            let desc = new_window_desc(
-                window_id,
-                root,
-                info.size,
-                info.pos,
-                info.maximised,
-                &window_data.config,
-            );
-            ctx.new_window(desc);
-            return druid::Handled::Yes;
+        match cmd.get(LAPCE_UI_COMMAND) {
+            Some(LapceUICommand::UpdateLatestRelease(release)) => {
+                *Arc::make_mut(&mut data.latest_release) = Some(release.clone());
+                return druid::Handled::Yes;
+            }
+            Some(LapceUICommand::RestartToUpdate(process_path, release)) => {
+                let _ = data.db.save_app(data);
+                let process_path = process_path.clone();
+                let release = release.clone();
+                std::thread::spawn(move || -> anyhow::Result<()> {
+                    log::info!("start to down new versoin");
+                    let src = lapce_data::update::download_release(&release)?;
+                    log::info!("start to extract");
+                    let path = lapce_data::update::extract(&src, &process_path)?;
+                    log::info!("now restart {path:?}");
+                    lapce_data::update::restart(&path)?;
+                    Ok(())
+                });
+                return druid::Handled::Yes;
+            }
+            Some(LapceUICommand::NewWindow(from_window_id)) => {
+                let (size, pos) = data
+                    .windows
+                    .get(from_window_id)
+                    // If maximised, use default dimensions instead
+                    .filter(|win| !win.maximised)
+                    .map(|win| (win.size, win.pos + (50.0, 50.0)))
+                    .unwrap_or((Size::new(800.0, 600.0), Point::new(0.0, 0.0)));
+                let info = WindowInfo {
+                    size,
+                    pos,
+                    maximised: false,
+                    tabs: TabsInfo {
+                        active_tab: 0,
+                        workspaces: vec![],
+                    },
+                };
+                let mut window_data = LapceWindowData::new(
+                    data.keypress.clone(),
+                    data.latest_release.clone(),
+                    data.panel_orders.clone(),
+                    ctx.get_external_handle(),
+                    &info,
+                    data.db.clone(),
+                );
+                let root = build_window(&mut window_data);
+                let window_id = window_data.window_id;
+                data.windows.insert(window_id, window_data.clone());
+                let desc = new_window_desc(
+                    window_id,
+                    root,
+                    info.size,
+                    info.pos,
+                    info.maximised,
+                    &window_data.config,
+                );
+                ctx.new_window(desc);
+                return druid::Handled::Yes;
+            }
+            _ => (),
         }
         druid::Handled::No
     }

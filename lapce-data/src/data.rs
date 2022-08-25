@@ -13,7 +13,6 @@ use std::env;
 
 use anyhow::Result;
 use crossbeam_channel::{unbounded, Receiver, Sender};
-use directories::BaseDirs;
 use druid::{
     piet::PietText, theme, Command, Data, Env, EventCtx, ExtEventSink,
     FileDialogOptions, Lens, Point, Rect, Size, Target, Vec2, WidgetId, WindowId,
@@ -30,26 +29,24 @@ use lapce_core::{
     register::Register,
     selection::Selection,
 };
+use lapce_proxy::{directory::Directory, VERSION};
 use lapce_rpc::{
-    buffer::BufferId, plugin::PluginDescription, source_control::FileDiff,
+    buffer::BufferId, proxy::ProxyResponse, source_control::FileDiff,
     terminal::TermId,
 };
-
-use lapce_proxy::plugin::PluginCatalog;
 
 use lsp_types::{Diagnostic, DiagnosticSeverity, Position, ProgressToken, TextEdit};
 use notify::Watcher;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use toml_edit::easy as toml;
 use xi_rope::{Rope, RopeDelta};
 
 use crate::{
     alert::{AlertContentData, AlertData},
     command::{
         CommandKind, EnsureVisiblePosition, InitBufferContentCb, LapceCommand,
-        LapceUICommand, LapceWorkbenchCommand, PluginLoadingStatus, LAPCE_COMMAND,
-        LAPCE_OPEN_FILE, LAPCE_OPEN_FOLDER, LAPCE_UI_COMMAND,
+        LapceUICommand, LapceWorkbenchCommand, LAPCE_COMMAND, LAPCE_OPEN_FILE,
+        LAPCE_OPEN_FOLDER, LAPCE_UI_COMMAND,
     },
     completion::CompletionData,
     config::{Config, ConfigWatcher, GetConfig, LapceTheme},
@@ -76,6 +73,7 @@ use crate::{
     source_control::SourceControlData,
     split::{SplitDirection, SplitMoveDirection},
     terminal::TerminalSplitData,
+    update::ReleaseInfo,
 };
 
 /// `LapceData` is the topmost structure in a tree of structures that holds
@@ -94,6 +92,8 @@ pub struct LapceData {
     pub db: Arc<LapceDb>,
     /// The order of panels in each postion
     pub panel_orders: PanelOrder,
+    /// The latest release information
+    pub latest_release: Arc<Option<ReleaseInfo>>,
 }
 
 impl LapceData {
@@ -107,6 +107,7 @@ impl LapceData {
         let panel_orders = db
             .get_panel_orders()
             .unwrap_or_else(|_| Self::default_panel_orders());
+        let latest_release = Arc::new(None);
 
         if let Some(path) = path {
             let path = PathBuf::from(path).canonicalize().unwrap();
@@ -139,6 +140,7 @@ impl LapceData {
                 };
                 let window = LapceWindowData::new(
                     keypress.clone(),
+                    latest_release.clone(),
                     panel_orders.clone(),
                     event_sink.clone(),
                     &info,
@@ -150,6 +152,7 @@ impl LapceData {
             for info in app.windows.iter() {
                 let window = LapceWindowData::new(
                     keypress.clone(),
+                    latest_release.clone(),
                     panel_orders.clone(),
                     event_sink.clone(),
                     info,
@@ -171,6 +174,7 @@ impl LapceData {
             });
             let window = LapceWindowData::new(
                 keypress.clone(),
+                latest_release.clone(),
                 panel_orders.clone(),
                 event_sink.clone(),
                 &info,
@@ -179,73 +183,24 @@ impl LapceData {
             windows.insert(window.window_id, window);
         }
 
-        thread::spawn(move || {
-            let mut catalog = PluginCatalog::new();
-            catalog.reload();
-            let plugins = catalog
-                .items
-                .values()
-                .cloned()
-                .collect::<Vec<PluginDescription>>();
-            let _ = event_sink.submit_command(
-                LAPCE_UI_COMMAND,
-                LapceUICommand::UpdateInstalledPluginDescriptions(
-                    PluginLoadingStatus::Ok(plugins.clone()),
-                ),
-                Target::Auto,
-            );
-            let _ = event_sink.submit_command(
-                LAPCE_UI_COMMAND,
-                LapceUICommand::UpdateUninstalledPluginDescriptions(
-                    PluginLoadingStatus::Loading,
-                ),
-                Target::Auto,
-            );
-            let _ = event_sink.submit_command(
-                LAPCE_UI_COMMAND,
-                LapceUICommand::UpdateInstalledPlugins(catalog.items.clone()),
-                Target::Auto,
-            );
-            if let Ok(fetched_plugins) = LapceData::load_plugin_descriptions() {
-                let (installed, uninstalled): (
-                    Vec<PluginDescription>,
-                    Vec<PluginDescription>,
-                ) = fetched_plugins.into_iter().partition(|p| {
-                    plugins
-                        .iter()
-                        .find(|ip| ip.name == p.name)
-                        .ok_or(())
-                        .is_ok()
-                });
+        #[cfg(feature = "updater")]
+        std::thread::spawn(move || loop {
+            if let Ok(release) = crate::update::get_latest_release() {
                 let _ = event_sink.submit_command(
                     LAPCE_UI_COMMAND,
-                    LapceUICommand::UpdateInstalledPluginDescriptions(
-                        PluginLoadingStatus::Ok(installed),
-                    ),
-                    Target::Auto,
-                );
-                let _ = event_sink.submit_command(
-                    LAPCE_UI_COMMAND,
-                    LapceUICommand::UpdateUninstalledPluginDescriptions(
-                        PluginLoadingStatus::Ok(uninstalled),
-                    ),
-                    Target::Auto,
-                );
-            } else {
-                let _ = event_sink.submit_command(
-                    LAPCE_UI_COMMAND,
-                    LapceUICommand::UpdateUninstalledPluginDescriptions(
-                        PluginLoadingStatus::Failed,
-                    ),
-                    Target::Auto,
+                    LapceUICommand::UpdateLatestRelease(release),
+                    Target::Global,
                 );
             }
+            std::thread::sleep(std::time::Duration::from_secs(60 * 60));
         });
+
         Self {
             windows,
             keypress,
             db,
             panel_orders,
+            latest_release,
         }
     }
 
@@ -277,27 +232,6 @@ impl LapceData {
         env.set(LapceTheme::INPUT_LINE_HEIGHT, 20.0);
         env.set(LapceTheme::INPUT_LINE_PADDING, 5.0);
         env.set(LapceTheme::INPUT_FONT_SIZE, 13u64);
-    }
-
-    pub fn load_plugin_descriptions() -> Result<Vec<PluginDescription>> {
-        let plugins: Vec<String> =
-            reqwest::blocking::get("https://lapce.github.io/plugins.json")?
-                .json()?;
-        let plugins: Vec<PluginDescription> = plugins
-            .iter()
-            .filter_map(|plugin| LapceData::load_plugin_description(plugin).ok())
-            .collect();
-        Ok(plugins)
-    }
-
-    fn load_plugin_description(plugin: &str) -> Result<PluginDescription> {
-        let url = format!(
-            "https://raw.githubusercontent.com/{}/master/plugin.toml",
-            plugin
-        );
-        let content = reqwest::blocking::get(url)?.text()?;
-        let plugin: PluginDescription = toml::from_str(&content)?;
-        Ok(plugin)
     }
 }
 
@@ -333,7 +267,6 @@ pub struct LapceWindowData {
     pub active_id: WidgetId,
     pub keypress: Arc<KeyPressData>,
     pub config: Arc<Config>,
-    pub plugins: Arc<Vec<PluginDescription>>,
     pub db: Arc<LapceDb>,
     pub watcher: Arc<notify::RecommendedWatcher>,
     /// The size of the window.
@@ -342,6 +275,7 @@ pub struct LapceWindowData {
     /// The position of the window.
     pub pos: Point,
     pub panel_orders: PanelOrder,
+    pub latest_release: Arc<Option<ReleaseInfo>>,
 }
 
 impl Data for LapceWindowData {
@@ -352,14 +286,15 @@ impl Data for LapceWindowData {
             && self.pos.same(&other.pos)
             && self.maximised.same(&other.maximised)
             && self.keypress.same(&other.keypress)
-            && self.plugins.same(&other.plugins)
             && self.panel_orders.same(&other.panel_orders)
+            && self.latest_release.same(&other.latest_release)
     }
 }
 
 impl LapceWindowData {
     pub fn new(
         keypress: Arc<KeyPressData>,
+        latest_release: Arc<Option<ReleaseInfo>>,
         panel_orders: PanelOrder,
         event_sink: ExtEventSink,
         info: &WindowInfo,
@@ -379,6 +314,7 @@ impl LapceWindowData {
                 workspace.clone(),
                 db.clone(),
                 keypress.clone(),
+                latest_release.clone(),
                 panel_orders.clone(),
                 event_sink.clone(),
             );
@@ -398,6 +334,7 @@ impl LapceWindowData {
                 LapceWorkspace::default(),
                 db.clone(),
                 keypress.clone(),
+                latest_release.clone(),
                 panel_orders.clone(),
                 event_sink.clone(),
             );
@@ -425,22 +362,21 @@ impl LapceWindowData {
         if let Some(path) = Config::settings_file() {
             let _ = watcher.watch(&path, notify::RecursiveMode::Recursive);
         }
-        if let Some(path) = Config::themes_folder() {
+        if let Some(path) = Directory::themes_directory() {
             let _ = watcher.watch(&path, notify::RecursiveMode::Recursive);
         }
-        if let Some(path) = KeyPressData::file() {
+        if let Some(path) = Config::keymaps_file() {
             let _ = watcher.watch(&path, notify::RecursiveMode::Recursive);
         }
-        if let Some(base) = BaseDirs::new() {
-            let path = base.home_dir().join(".lapce").join("plugins");
+        if let Some(path) = Directory::plugins_directory() {
             let _ = watcher.watch(&path, notify::RecursiveMode::Recursive);
         }
+
         Self {
             window_id,
             tabs,
             tabs_order: Arc::new(tabs_order),
             active,
-            plugins: Arc::new(Vec::new()),
             active_id: active_tab_id,
             keypress,
             config,
@@ -450,6 +386,7 @@ impl LapceWindowData {
             pos: info.pos,
             maximised: info.maximised,
             panel_orders,
+            latest_release,
         }
     }
 
@@ -525,11 +462,6 @@ pub struct LapceTabData {
     pub search: Arc<SearchData>,
     pub plugin: Arc<PluginData>,
     pub picker: Arc<FilePickerData>,
-    pub plugins: Arc<Vec<PluginDescription>>,
-    pub installed_plugins_desc: Arc<PluginLoadingStatus>,
-    pub uninstalled_plugins_desc: Arc<PluginLoadingStatus>,
-    pub installed_plugins: Arc<HashMap<String, PluginDescription>>,
-    pub disabled_plugins: Arc<HashMap<String, PluginDescription>>,
     pub file_explorer: Arc<FileExplorerData>,
     pub proxy: Arc<LapceProxy>,
     pub proxy_status: Arc<ProxyStatus>,
@@ -546,6 +478,7 @@ pub struct LapceTabData {
     pub db: Arc<LapceDb>,
     pub progresses: im::Vector<WorkProgress>,
     pub drag: Arc<Option<(Vec2, Vec2, DragContent)>>,
+    pub latest_release: Arc<Option<ReleaseInfo>>,
 }
 
 impl Data for LapceTabData {
@@ -569,18 +502,11 @@ impl Data for LapceTabData {
             && self.plugin.same(&other.plugin)
             && self.problem.same(&other.problem)
             && self.search.same(&other.search)
-            && self
-                .installed_plugins_desc
-                .same(&other.installed_plugins_desc)
-            && self
-                .uninstalled_plugins_desc
-                .same(&other.uninstalled_plugins_desc)
-            && self.disabled_plugins.same(&other.disabled_plugins)
-            && self.installed_plugins.same(&other.installed_plugins)
             && self.picker.same(&other.picker)
             && self.drag.same(&other.drag)
             && self.keypress.same(&other.keypress)
             && self.settings.same(&other.settings)
+            && self.latest_release.same(&other.latest_release)
     }
 }
 
@@ -591,12 +517,14 @@ impl GetConfig for LapceTabData {
 }
 
 impl LapceTabData {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         window_id: WindowId,
         tab_id: WidgetId,
         workspace: LapceWorkspace,
         db: Arc<LapceDb>,
         keypress: Arc<KeyPressData>,
+        latest_release: Arc<Option<ReleaseInfo>>,
         panel_orders: PanelOrder,
         event_sink: ExtEventSink,
     ) -> Self {
@@ -609,9 +537,17 @@ impl LapceTabData {
         };
 
         let (term_sender, term_receiver) = unbounded();
+        let disabled_volts = db.get_disabled_volts().unwrap_or_default();
+        let workspace_disabled_volts = db
+            .get_workspace_disabled_volts(&workspace)
+            .unwrap_or_default();
+        let mut all_disabled_volts = disabled_volts.clone();
+        all_disabled_volts.extend_from_slice(&workspace_disabled_volts);
         let proxy = Arc::new(LapceProxy::new(
             tab_id,
             workspace.clone(),
+            all_disabled_volts,
+            config.plugins.clone(),
             term_sender.clone(),
             event_sink.clone(),
         ));
@@ -621,7 +557,12 @@ impl LapceTabData {
         let source_control = Arc::new(SourceControlData::new());
         let settings = Arc::new(LapceSettingsPanelData::new());
         let alert = Arc::new(AlertData::new());
-        let plugin = Arc::new(PluginData::new());
+        let plugin = Arc::new(PluginData::new(
+            tab_id,
+            disabled_volts,
+            workspace_disabled_volts,
+            event_sink.clone(),
+        ));
         let file_explorer = Arc::new(FileExplorerData::new(
             tab_id,
             workspace.clone(),
@@ -719,11 +660,6 @@ impl LapceTabData {
             plugin,
             problem,
             search,
-            plugins: Arc::new(Vec::new()),
-            disabled_plugins: Arc::new(HashMap::new()),
-            installed_plugins_desc: Arc::new(PluginLoadingStatus::Ok(Vec::new())),
-            uninstalled_plugins_desc: Arc::new(PluginLoadingStatus::Ok(Vec::new())),
-            installed_plugins: Arc::new(HashMap::new()),
             find: Arc::new(Find::new(0)),
             picker: file_picker,
             source_control,
@@ -743,6 +679,7 @@ impl LapceTabData {
             db,
             progresses: im::Vector::new(),
             drag: Arc::new(None),
+            latest_release,
         };
         tab.start_update_process(event_sink);
         tab
@@ -1022,6 +959,24 @@ impl LapceTabData {
         _env: &Env,
     ) {
         match command {
+            LapceWorkbenchCommand::RestartToUpdate => {
+                if let Some(release) = (*self.latest_release).clone() {
+                    if release.version != *VERSION {
+                        if let Some(process_path) =
+                            process_path::get_executable_path()
+                        {
+                            ctx.submit_command(Command::new(
+                                LAPCE_UI_COMMAND,
+                                LapceUICommand::RestartToUpdate(
+                                    process_path,
+                                    release,
+                                ),
+                                Target::Global,
+                            ));
+                        }
+                    }
+                }
+            }
             LapceWorkbenchCommand::CloseFolder => {
                 if self.workspace.path.is_some() {
                     let mut workspace = (*self.workspace).clone();
@@ -1139,7 +1094,7 @@ impl LapceTabData {
                 self.main_split.open_settings(ctx, true);
             }
             LapceWorkbenchCommand::OpenKeyboardShortcutsFile => {
-                if let Some(path) = KeyPressData::file() {
+                if let Some(path) = Config::keymaps_file() {
                     self.main_split.jump_to_location(
                         ctx,
                         None,
@@ -1341,7 +1296,7 @@ impl LapceTabData {
                 }
             }
             LapceWorkbenchCommand::SourceControlInit => {
-                self.proxy.git_init();
+                self.proxy.proxy_rpc.git_init();
             }
             LapceWorkbenchCommand::SourceControlCommit => {
                 let diffs: Vec<FileDiff> = self
@@ -1371,7 +1326,7 @@ impl LapceTabData {
                 if message.is_empty() {
                     return;
                 }
-                self.proxy.git_commit(message, diffs);
+                self.proxy.proxy_rpc.git_commit(message.to_string(), diffs);
                 Arc::make_mut(doc).reload(Rope::from(""), true);
                 let editor = self
                     .main_split
@@ -1387,15 +1342,19 @@ impl LapceTabData {
             LapceWorkbenchCommand::SourceControlDiscardActiveFileChanges => {
                 if let Some(editor) = self.main_split.active_editor() {
                     if let BufferContent::File(path) = &editor.content {
-                        self.proxy.git_discard_file_changes(path);
+                        self.proxy
+                            .proxy_rpc
+                            .git_discard_files_changes(vec![path.clone()]);
                     }
                 }
             }
             LapceWorkbenchCommand::SourceControlDiscardWorkspaceChanges => {
-                self.proxy.git_discard_workspace_changes();
+                self.proxy.proxy_rpc.git_discard_workspace_changes();
             }
             LapceWorkbenchCommand::CheckoutBranch => match data {
-                Some(Value::String(branch)) => self.proxy.git_checkout(&branch),
+                Some(Value::String(branch)) => {
+                    self.proxy.proxy_rpc.git_checkout(branch)
+                }
                 _ => log::error!("checkout called without a branch"), // TODO: How do I show a result to the user here?
             },
 
@@ -1486,18 +1445,25 @@ impl LapceTabData {
                     env,
                 );
             }
-            CommandKind::Focus(_cmd) => {
+            CommandKind::Focus(_) | CommandKind::Edit(_) | CommandKind::Move(_) => {
+                let widget_id = if self.focus != self.palette.input_editor {
+                    self.focus
+                } else if let Some(active_tab) = self.main_split.active_tab.as_ref()
+                {
+                    self.main_split
+                        .editor_tabs
+                        .get(active_tab)
+                        .unwrap()
+                        .active_child()
+                        .widget_id()
+                } else {
+                    self.focus
+                };
+
                 ctx.submit_command(Command::new(
                     LAPCE_COMMAND,
                     command.clone(),
-                    Target::Widget(self.focus),
-                ));
-            }
-            CommandKind::Edit(_) => {
-                ctx.submit_command(Command::new(
-                    LAPCE_COMMAND,
-                    command.clone(),
-                    Target::Widget(self.focus),
+                    Target::Widget(widget_id),
                 ));
             }
             _ => {}
@@ -1698,7 +1664,7 @@ impl Lens<LapceWindowData, LapceTabData> for LapceTabLens {
     ) -> V {
         let mut tab = data.tabs.get(&self.0).unwrap().clone();
         tab.keypress = data.keypress.clone();
-        tab.plugins = data.plugins.clone();
+        tab.latest_release = data.latest_release.clone();
         tab.multiple_tab = data.tabs.len() > 1;
         if !tab.panel.order.same(&data.panel_orders) {
             Arc::make_mut(&mut tab.panel).order = data.panel_orders.clone();
@@ -1734,6 +1700,7 @@ impl Lens<LapceData, LapceWindowData> for LapceWindowLens {
     ) -> V {
         let mut win = data.windows.get(&self.0).unwrap().clone();
         win.keypress = data.keypress.clone();
+        win.latest_release = data.latest_release.clone();
         win.panel_orders = data.panel_orders.clone();
         let result = f(&mut win);
         data.keypress = win.keypress.clone();
@@ -1944,15 +1911,14 @@ impl LapceMainSplitData {
     ) {
         let doc = self.open_docs.get(path).unwrap();
         let rev = doc.rev();
-        let buffer_id = doc.id();
         let event_sink = ctx.get_external_handle();
         let path = PathBuf::from(path);
         let tab_id = *self.tab_id;
-        self.proxy.save(
+        self.proxy.proxy_rpc.save(
             rev,
-            buffer_id,
+            path.clone(),
             Box::new(move |result| {
-                if let Ok(_r) = result {
+                if let Ok(ProxyResponse::SaveResponse {}) = result {
                     let _ = event_sink.submit_command(
                         LAPCE_UI_COMMAND,
                         LapceUICommand::BufferSave(path, rev, exit_widget_id),
@@ -2425,7 +2391,7 @@ impl LapceMainSplitData {
             EditorTabChild::Editor(view_id, _, _) => {
                 let editor = self.editors.get(&view_id).unwrap();
                 if let BufferContent::File(ref path) = editor.content {
-                    if let Some(folder) = Config::themes_folder() {
+                    if let Some(folder) = Directory::themes_directory() {
                         if let Some(file_name) = path.file_name() {
                             let _ = std::fs::copy(path, folder.join(file_name));
                         }
@@ -2905,7 +2871,7 @@ impl LapceMainSplitData {
                 let rev = doc.rev();
                 let path = path.to_path_buf();
                 let content = content.clone();
-                self.proxy.save_buffer_as(
+                self.proxy.proxy_rpc.save_buffer_as(
                     doc.id(),
                     path.to_path_buf(),
                     doc.rev(),

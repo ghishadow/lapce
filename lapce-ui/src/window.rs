@@ -2,7 +2,7 @@ use druid::{
     kurbo::Line,
     piet::{PietText, PietTextLayout, Svg, Text, TextLayout, TextLayoutBuilder},
     widget::{LensWrap, WidgetExt},
-    BoxConstraints, Command, Env, Event, EventCtx, LayoutCtx, LifeCycle,
+    BoxConstraints, Command, Data, Env, Event, EventCtx, LayoutCtx, LifeCycle,
     LifeCycleCtx, PaintCtx, Point, Rect, Region, RenderContext, Size, Target,
     Widget, WidgetId, WidgetPod, WindowConfig, WindowId, WindowState,
 };
@@ -80,6 +80,7 @@ impl LapceWindow {
             workspace,
             data.db.clone(),
             data.keypress.clone(),
+            data.latest_release.clone(),
             data.panel_orders.clone(),
             ctx.get_external_handle(),
         );
@@ -271,9 +272,6 @@ impl Widget<LapceWindowData> for LapceWindow {
             Event::Command(cmd) if cmd.is(LAPCE_UI_COMMAND) => {
                 let command = cmd.get_unchecked(LAPCE_UI_COMMAND);
                 match command {
-                    LapceUICommand::UpdatePluginDescriptions(plugins) => {
-                        data.plugins = Arc::new(plugins.to_owned());
-                    }
                     LapceUICommand::Focus => {
                         ctx.submit_command(Command::new(
                             LAPCE_UI_COMMAND,
@@ -480,6 +478,10 @@ impl Widget<LapceWindowData> for LapceWindow {
         }
         for tab in self.tabs.iter_mut() {
             tab.update(ctx, data, env);
+        }
+
+        if !old_data.latest_release.same(&data.latest_release) {
+            ctx.request_layout();
         }
     }
 
@@ -747,7 +749,10 @@ pub fn window_controls(
     ));
 
     let mut svgs = Vec::new();
-    if cfg!(target_os = "linux") {
+    if cfg!(target_os = "linux")
+        || cfg!(target_os = "freebsd")
+        || cfg!(target_os = "openbsd")
+    {
         let minimize_rect = Size::new(width, width)
             .to_rect()
             .with_origin(Point::new(x, 0.0))

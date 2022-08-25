@@ -13,7 +13,7 @@ use xi_rope::{interval::IntervalBounds, rope::Rope, RopeDelta};
 
 #[derive(Clone)]
 pub struct Buffer {
-    pub language_id: String,
+    pub language_id: &'static str,
     pub id: BufferId,
     pub rope: Rope,
     pub path: PathBuf,
@@ -29,7 +29,7 @@ impl Buffer {
             Rope::from("")
         };
         let rev = if rope.is_empty() { 0 } else { 1 };
-        let language_id = language_id_from_path(&path).unwrap_or("").to_string();
+        let language_id = language_id_from_path(&path).unwrap_or("");
         let mod_time = get_mod_time(&path);
         Buffer {
             id,
@@ -170,23 +170,81 @@ pub fn read_path_to_string_lossy<P: AsRef<Path>>(
     Ok(contents.to_string())
 }
 
-fn language_id_from_path(path: &Path) -> Option<&str> {
+pub fn language_id_from_path(path: &Path) -> Option<&'static str> {
     // recommended language_id values
     // https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#textDocumentItem
-    Some(match path.extension()?.to_str()? {
-        "rs" => "rust",
-        "go" => "go",
-        "py" => "python",
-        "jl" => "julia",
-        "cpp" | "hpp" | "cxx" | "hxx" | "c++" | "h++" | "cc" | "hh" | "C" | "H" => {
-            "cpp"
+    Some(match path.extension() {
+        Some(ext) => {
+            match ext.to_str()? {
+                "C" | "H" => "cpp",
+                "M" => "objective-c",
+                // stop case-sensitive matching
+                ext => match ext.to_lowercase().as_str() {
+                    "bat" => "bat",
+                    "clj" | "cljs" | "cljc" | "edn" => "clojure",
+                    "coffee" => "coffeescript",
+                    "c" | "h" => "c",
+                    "cpp" | "hpp" | "cxx" | "hxx" | "c++" | "h++" | "cc" | "hh" => {
+                        "cpp"
+                    }
+                    "cs" | "csx" => "csharp",
+                    "css" => "css",
+                    "diff" | "patch" => "diff",
+                    "dart" => "dart",
+                    "dockerfile" => "dockerfile",
+                    "ex" | "exs" => "elixir",
+                    "erl" | "hrl" => "erlang",
+                    "fs" | "fsi" | "fsx" | "fsscript" => "fsharp",
+                    "git-commit" | "git-rebase" => "git",
+                    "go" => "go",
+                    "groovy" | "gvy" | "gy" | "gsh" => "groovy",
+                    "hbs" => "handlebars",
+                    "htm" | "html" | "xhtml" => "html",
+                    "ini" => "ini",
+                    "java" | "class" => "java",
+                    "js" => "javascript",
+                    "jsx" => "javascriptreact",
+                    "json" => "json",
+                    "jl" => "julia",
+                    "less" => "less",
+                    "lua" => "lua",
+                    "makefile" | "gnumakefile" => "makefile",
+                    "md" | "markdown" => "markdown",
+                    "m" => "objective-c",
+                    "mm" => "objective-cpp",
+                    "plx" | "pl" | "pm" | "xs" | "t" | "pod" | "cgi" => "perl",
+                    "p6" | "pm6" | "pod6" | "t6" | "raku" | "rakumod"
+                    | "rakudoc" | "rakutest" => "perl6",
+                    "php" | "phtml" | "pht" | "phps" => "php",
+                    "ps1" | "ps1xml" | "psc1" | "psm1" | "psd1" | "pssc"
+                    | "psrc" => "powershell",
+                    "py" => "python",
+                    "r" => "r",
+                    "rb" => "ruby",
+                    "rs" => "rust",
+                    "scss" | "sass" => "scss",
+                    "sc" | "scala" => "scala",
+                    "sh" | "bash" | "zsh" => "shellscript",
+                    "sql" => "sql",
+                    "swift" => "swift",
+                    "toml" => "toml",
+                    "ts" => "typescript",
+                    "tsx" => "typescriptreact",
+                    "tex" => "tex",
+                    "vb" => "vb",
+                    "xml" => "xml",
+                    "xsl" => "xsl",
+                    "yml" | "yaml" => "yaml",
+                    _ => return None,
+                },
+            }
         }
-        "c" | "h" => "c",
-        "js" => "javascript",
-        "jsx" => "javascriptreact",
-        "ts" => "typescript",
-        "tsx" => "typescriptreact",
-        _ => return None,
+        // Handle paths without extension
+        None => match path.file_name()?.to_str()? {
+            "dockerfile" => "dockerfile",
+            "makefile" | "gnumakefile" => "makefile",
+            _ => return None,
+        },
     })
 }
 
