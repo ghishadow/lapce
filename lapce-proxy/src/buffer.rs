@@ -241,7 +241,7 @@ pub fn language_id_from_path(path: &Path) -> Option<&'static str> {
         }
         // Handle paths without extension
         None => match path.file_name()?.to_str()? {
-            "dockerfile" => "dockerfile",
+            "dockerfile" | "Dockerfile" => "dockerfile",
             "makefile" | "gnumakefile" => "makefile",
             _ => return None,
         },
