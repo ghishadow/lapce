@@ -1,6 +1,6 @@
 [package]
 name = "lapce-core"
-version = "0.1.3"
+version = "0.2.0"
 authors = ["Dongdong Zhou <dzhou121@gmail.com>"]
 edition = "2021"
 
@@ -9,6 +9,9 @@ thiserror = "1.0"
 itertools = "0.10.3"
 log = "0.4.14"
 bitflags = "1.3.2"
+once_cell = "1.13.0"
+slotmap = "1.0"
+arc-swap = "1.5.1"
 strum = "0.24.0"
 strum_macros = "0.24"
 serde = "1.0"
@@ -30,7 +33,7 @@ tree-sitter-ruby = { git = "https://github.com/Liberatys/tree-sitter-ruby.git", 
 tree-sitter-c = { version = "0.20.2", optional = true }
 tree-sitter-cpp = { version = "0.20.0", optional = true }
 tree-sitter-json = { version = "0.19.0", optional = true }
-tree-sitter-md = { git = "https://github.com/dzhou121/tree-sitter-markdown.git", version = "0.0.1", optional = true  }
+tree-sitter-md = { git = "https://github.com/MDeiml/tree-sitter-markdown.git", branch = "split_parser", optional = true }
 tree-sitter-html = { version = "0.19.0", optional = true }
 tree-sitter-java = { git = "https://github.com/tree-sitter/tree-sitter-java.git", version = "0.20.0", optional = true  }
 tree-sitter-elm = { version = "5.6.2", optional = true }
@@ -51,6 +54,9 @@ tree-sitter-bash = { git = "https://github.com/syntacti/tree-sitter-bash", branc
 tree-sitter-yaml = { git = "https://github.com/panekj/tree-sitter-yaml", branch = "master", optional = true }
 tree-sitter-julia = { git = "https://github.com/varlad/tree-sitter-julia", branch = "master", optional = true }
 tree-sitter-wgsl = { git = "https://github.com/szebniok/tree-sitter-wgsl", branch = "master", optional = true }
+tree-sitter-dockerfile = { git = "https://github.com/panekj/tree-sitter-dockerfile", branch = "queries", optional = true }
+tree-sitter-c-sharp = { git = "https://github.com/tree-sitter/tree-sitter-c-sharp", branch = "master", optional = true }
+tree-sitter-nix = { git = "https://github.com/panekj/tree-sitter-nix", branch = "master", optional = true }
 
 [features]
 default = []
@@ -88,3 +94,6 @@ lang-bash = ["dep:tree-sitter-bash"]
 lang-yaml = ["dep:tree-sitter-yaml"]
 lang-julia = ["dep:tree-sitter-julia"]
 lang-wgsl = ["dep:tree-sitter-wgsl"]
+lang-dockerfile = ["dep:tree-sitter-dockerfile"]
+lang-csharp = ["dep:tree-sitter-c-sharp"]
+lang-nix = ["dep:tree-sitter-nix"]

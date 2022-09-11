@@ -31,6 +31,8 @@ const LOGO_ICO: &[u8] = include_bytes!("../../extra/windows/lapce.ico");
 #[clap(name = "Lapce")]
 #[clap(version=*VERSION)]
 struct Cli {
+    #[clap(short, long, action)]
+    new: bool,
     paths: Vec<PathBuf>,
 }
 
@@ -42,7 +44,7 @@ pub fn launch() {
     let cli = Cli::parse();
     let pwd = std::env::current_dir().unwrap_or_default();
     let paths: Vec<PathBuf> = cli.paths.iter().map(|p| pwd.join(p)).collect();
-    if LapceData::check_local_socket(paths.clone()).is_ok() {
+    if !cli.new && LapceData::check_local_socket(paths.clone()).is_ok() {
         return;
     }
 
@@ -199,10 +201,23 @@ fn window_icon() -> Option<druid::Icon> {
 
 #[cfg(target_os = "macos")]
 fn macos_window_desc<T: druid::Data>(desc: WindowDesc<T>) -> WindowDesc<T> {
+    use lapce_data::command::{
+        CommandKind, LapceCommand, LapceWorkbenchCommand, LAPCE_COMMAND,
+    };
+
     desc.menu(|_, _, _| {
         Menu::new("Lapce").entry(
             Menu::new("")
-                .entry(MenuItem::new("About Lapce"))
+                .entry(MenuItem::new("About Lapce").command(Command::new(
+                    LAPCE_COMMAND,
+                    LapceCommand {
+                        kind: CommandKind::Workbench(
+                            LapceWorkbenchCommand::ShowAbout,
+                        ),
+                        data: None,
+                    },
+                    Target::Auto,
+                )))
                 .separator()
                 .entry(
                     MenuItem::new("Hide Lapce")
@@ -318,11 +333,11 @@ impl AppDelegate<LapceData> for LapceAppDelegate {
                 );
 
                 let mut tab = meta.data;
-                tab.window_id = window_data.window_id;
+                tab.window_id = Arc::new(window_data.window_id);
 
                 let tab_id = tab.id;
                 window_data.tabs_order = Arc::new(vec![tab_id]);
-                window_data.active_id = tab_id;
+                window_data.active_id = Arc::new(tab_id);
                 window_data.tabs.clear();
                 window_data.tabs.insert(tab_id, tab);
 

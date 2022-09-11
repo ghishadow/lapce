@@ -186,7 +186,6 @@ impl Widget<LapceTabData> for Palette {
     ) {
         if !old_data.palette.same(&data.palette) {
             ctx.request_layout();
-            ctx.request_paint();
         }
 
         self.container.update(ctx, data, env);
@@ -763,8 +762,7 @@ impl PaletteContent {
 
         let text_layout = text_layout.build().unwrap();
         let x = svg_x + 5.0;
-        let y = line_height * line as f64
-            + (line_height - text_layout.size().height) / 2.0;
+        let y = line_height * line as f64 + text_layout.y_offset(line_height);
         let point = Point::new(x, y);
         ctx.draw_text(&text_layout, point);
     }

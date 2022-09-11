@@ -221,7 +221,11 @@ pub struct EditorConfig {
 
 impl EditorConfig {
     pub fn font_family(&self) -> FontFamily {
-        FontFamily::new_unchecked(self.font_family.clone())
+        if self.font_family.is_empty() {
+            FontFamily::SYSTEM_UI
+        } else {
+            FontFamily::new_unchecked(self.font_family.clone())
+        }
     }
 
     pub fn inlay_hint_font_family(&self) -> FontFamily {
@@ -263,11 +267,11 @@ impl EditorConfig {
 #[serde(rename_all = "kebab-case")]
 pub struct UIConfig {
     #[field_names(
-        desc = "Set the ui font family. If empty, it uses system default."
+        desc = "Set the UI font family. If empty, it uses system default."
     )]
     font_family: String,
 
-    #[field_names(desc = "Set the ui base font size")]
+    #[field_names(desc = "Set the UI base font size")]
     font_size: usize,
 
     #[field_names(
@@ -303,7 +307,7 @@ impl UIConfig {
         if self.font_family.is_empty() {
             FontFamily::SYSTEM_UI
         } else {
-            FontFamily::new_unchecked(self.font_family.clone())
+            FontFamily::new_unchecked(self.font_family.as_str())
         }
     }
 
@@ -341,7 +345,7 @@ impl UIConfig {
         if self.hover_font_family.is_empty() {
             self.font_family()
         } else {
-            FontFamily::new_unchecked(self.hover_font_family.clone())
+            FontFamily::new_unchecked(self.hover_font_family.as_str())
         }
     }
 

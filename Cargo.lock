@@ -123,6 +123,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "508b352bb5c066aac251f6daf6b36eccd03e8a88e8081cd44959ea277a3af9a8"
 
 [[package]]
+name = "arc-swap"
+version = "1.5.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "983cd8b9d4b02a6dc6ffa557262eb5858a27a0038ffffe21a0f133eaa819a164"
+
+[[package]]
 name = "arrayref"
 version = "0.3.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2526,7 +2532,7 @@ dependencies = [
 
 [[package]]
 name = "lapce"
-version = "0.1.3"
+version = "0.2.0"
 dependencies = [
  "lapce-proxy",
  "lapce-ui",
@@ -2534,23 +2540,28 @@ dependencies = [
 
 [[package]]
 name = "lapce-core"
-version = "0.1.3"
+version = "0.2.0"
 dependencies = [
+ "arc-swap",
  "bitflags",
  "itertools",
  "lapce-rpc",
  "log 0.4.17",
  "lsp-types",
+ "once_cell",
  "serde 1.0.143",
  "serde_json",
+ "slotmap",
  "strum 0.24.1",
  "strum_macros 0.24.3",
  "thiserror",
  "tree-sitter",
  "tree-sitter-bash",
  "tree-sitter-c",
+ "tree-sitter-c-sharp",
  "tree-sitter-cpp",
  "tree-sitter-css",
+ "tree-sitter-dockerfile",
  "tree-sitter-elixir",
  "tree-sitter-elm",
  "tree-sitter-glimmer",
@@ -2565,6 +2576,7 @@ dependencies = [
  "tree-sitter-json",
  "tree-sitter-julia",
  "tree-sitter-md",
+ "tree-sitter-nix",
  "tree-sitter-ocaml",
  "tree-sitter-php",
  "tree-sitter-python",
@@ -2583,7 +2595,7 @@ dependencies = [
 
 [[package]]
 name = "lapce-data"
-version = "0.1.3"
+version = "0.2.0"
 dependencies = [
  "alacritty_terminal",
  "anyhow",
@@ -2639,7 +2651,7 @@ dependencies = [
 
 [[package]]
 name = "lapce-proxy"
-version = "0.1.3"
+version = "0.2.0"
 dependencies = [
  "alacritty_terminal",
  "anyhow",
@@ -2684,7 +2696,7 @@ dependencies = [
 
 [[package]]
 name = "lapce-rpc"
-version = "0.1.3"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "crossbeam-channel",
@@ -2698,7 +2710,7 @@ dependencies = [
 
 [[package]]
 name = "lapce-ui"
-version = "0.1.3"
+version = "0.2.0"
 dependencies = [
  "Inflector",
  "alacritty_terminal",
@@ -3493,7 +3505,7 @@ dependencies = [
 [[package]]
 name = "parley"
 version = "0.1.0"
-source = "git+https://github.com/lapce/parley#6baaa02bbe3ab717822656ad98a95f8121febd53"
+source = "git+https://github.com/lapce/parley#c37477b889ff53b9a3033e2180becddf90b9bb17"
 dependencies = [
  "fount",
  "swash",
@@ -3575,7 +3587,7 @@ dependencies = [
 [[package]]
 name = "piet-wgpu"
 version = "0.1.0"
-source = "git+https://github.com/lapce/piet-wgpu?branch=shell_opengl#f863b3e49175d1811e6008cea2ca1bd282fc5bed"
+source = "git+https://github.com/lapce/piet-wgpu?branch=shell_opengl#516c591c0b78bf6446fc6b04c4f2e8a89c4ee0b7"
 dependencies = [
  "bytemuck",
  "glam",
@@ -3736,7 +3748,7 @@ dependencies = [
 [[package]]
 name = "psp-types"
 version = "0.1.0"
-source = "git+https://github.com/lapce/psp-types#0a18e1d285b6e1791e440728c633ef84ed99d1e0"
+source = "git+https://github.com/lapce/psp-types#e7305b0bda539208dd133732178c3e197f95ca5f"
 dependencies = [
  "lsp-types",
  "serde 1.0.143",
@@ -4946,6 +4958,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "tree-sitter-c-sharp"
+version = "0.19.1"
+source = "git+https://github.com/tree-sitter/tree-sitter-c-sharp?branch=master#2734945fcc2da52365e7071958b9eba4ff151937"
+dependencies = [
+ "cc",
+ "tree-sitter",
+]
+
+[[package]]
 name = "tree-sitter-cpp"
 version = "0.20.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4959,6 +4980,15 @@ dependencies = [
 name = "tree-sitter-css"
 version = "0.19.0"
 source = "git+https://github.com/syntacti/tree-sitter-css?branch=master#b5018f23290618d70c7483cd60a06a05d54832e1"
+dependencies = [
+ "cc",
+ "tree-sitter",
+]
+
+[[package]]
+name = "tree-sitter-dockerfile"
+version = "0.1.0"
+source = "git+https://github.com/panekj/tree-sitter-dockerfile?branch=queries#c49d819e07685c90456270f1cc654d9cba640f53"
 dependencies = [
  "cc",
  "tree-sitter",
@@ -5089,8 +5119,17 @@ dependencies = [
 
 [[package]]
 name = "tree-sitter-md"
+version = "0.1.1"
+source = "git+https://github.com/MDeiml/tree-sitter-markdown.git?branch=split_parser#e375ba95ff9a12418f9b9e7c190f549d08b5380a"
+dependencies = [
+ "cc",
+ "tree-sitter",
+]
+
+[[package]]
+name = "tree-sitter-nix"
 version = "0.0.1"
-source = "git+https://github.com/dzhou121/tree-sitter-markdown.git#134c7f870ad17b3c3e40cd90b8bbd08329ac4bbd"
+source = "git+https://github.com/panekj/tree-sitter-nix?branch=master#59fc47150ab437e8bb356c7ab21e9531e87f7cc8"
 dependencies = [
  "cc",
  "tree-sitter",

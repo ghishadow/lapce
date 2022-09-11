@@ -4,7 +4,7 @@ use std::{collections::HashMap, path::Path};
 use druid::menu::MenuEventCtx;
 use druid::piet::TextAttribute;
 use druid::{
-    piet::{Text, TextLayout as PietTextLayout, TextLayoutBuilder},
+    piet::{Text, TextLayoutBuilder},
     BoxConstraints, Command, Cursor, Env, Event, EventCtx, LayoutCtx, LifeCycle,
     LifeCycleCtx, PaintCtx, Point, Rect, RenderContext, Size, Target, UpdateCtx,
     Widget, WidgetExt, WidgetId, WidgetPod,
@@ -126,10 +126,7 @@ fn paint_single_file_node_item(
         .unwrap();
     ctx.draw_text(
         &text_layout,
-        Point::new(
-            38.0 + padding,
-            y + (line_height - text_layout.size().height) / 2.0,
-        ),
+        Point::new(38.0 + padding, y + text_layout.y_offset(line_height)),
     );
 }
 
@@ -607,7 +604,7 @@ impl Widget<LapceTabData> for FileExplorerFileList {
 
                         // The ids are so that the correct LapceTabData can be acquired inside the menu event cb
                         // since the context menu only gets access to LapceData
-                        let window_id = data.window_id;
+                        let window_id = *data.window_id;
                         let tab_id = data.id;
                         let item = druid::MenuItem::new("New File").on_activate(
                             make_new_file_cb(
@@ -957,6 +954,7 @@ struct OpenEditorList {
     mouse_pos: Point,
     in_view_tab_children: HashMap<usize, (Rect, WidgetId)>,
     mouse_down: Option<(usize, Option<Rect>)>,
+    hover_index: Option<usize>,
 }
 
 impl OpenEditorList {
@@ -966,6 +964,7 @@ impl OpenEditorList {
             mouse_pos: Point::ZERO,
             in_view_tab_children: HashMap::new(),
             mouse_down: None,
+            hover_index: None,
         }
     }
 
@@ -1015,7 +1014,7 @@ impl OpenEditorList {
                     text = format!("{text} (Working tree)");
                 }
             }
-            EditorTabChild::Settings(_, _) => {
+            EditorTabChild::Settings { .. } => {
                 text = "Settings".to_string();
                 hint = format!("ver. {}", *VERSION);
             }
@@ -1108,8 +1107,7 @@ impl OpenEditorList {
             &text_layout,
             Point::new(
                 svg_rect.x1 + 5.0,
-                i as f64 * self.line_height
-                    + (self.line_height - text_layout.size().height) / 2.0,
+                i as f64 * self.line_height + text_layout.y_offset(self.line_height),
             ),
         );
     }
@@ -1125,13 +1123,19 @@ impl Widget<LapceTabData> for OpenEditorList {
     ) {
         match event {
             Event::MouseMove(mouse_event) => {
+                self.mouse_pos = mouse_event.pos;
                 let index = (mouse_event.pos.y / self.line_height).floor() as usize;
+                let hover_index = self.hover_index;
                 if self.in_view_tab_children.contains_key(&index) {
+                    self.hover_index = Some(index);
                     ctx.set_cursor(&druid::Cursor::Pointer);
                 } else {
+                    self.hover_index = None;
                     ctx.clear_cursor();
                 }
-                self.mouse_pos = mouse_event.pos;
+                if hover_index != self.hover_index {
+                    ctx.request_paint();
+                }
             }
             Event::MouseDown(mouse_event) => {
                 self.mouse_down = None;
@@ -1269,8 +1273,7 @@ impl Widget<LapceTabData> for OpenEditorList {
                         Point::new(
                             10.0,
                             (i as f64 * self.line_height)
-                                + (self.line_height - text_layout.size().height)
-                                    / 2.0,
+                                + text_layout.y_offset(self.line_height),
                         ),
                     );
                 }

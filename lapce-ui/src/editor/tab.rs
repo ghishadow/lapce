@@ -1,9 +1,9 @@
 use std::{cell::RefCell, rc::Rc, sync::Arc};
 
 use druid::{
-    kurbo::Line, piet::TextLayout, BoxConstraints, Command, Env, Event, EventCtx,
-    LayoutCtx, LifeCycle, LifeCycleCtx, MouseEvent, PaintCtx, Point, Rect,
-    RenderContext, Size, Target, UpdateCtx, Widget, WidgetId, WidgetPod,
+    kurbo::Line, BoxConstraints, Command, Env, Event, EventCtx, LayoutCtx,
+    LifeCycle, LifeCycleCtx, MouseEvent, PaintCtx, Point, Rect, RenderContext, Size,
+    Target, UpdateCtx, Widget, WidgetId, WidgetPod,
 };
 use lapce_core::command::FocusCommand;
 use lapce_data::{
@@ -60,7 +60,7 @@ impl LapceEditorTab {
                 EditorTabChild::Editor(view_id, _, _) => {
                     data.main_split.editors.remove(view_id);
                 }
-                EditorTabChild::Settings(_, _) => {}
+                EditorTabChild::Settings { .. } => {}
             }
         }
         ctx.submit_command(Command::new(
@@ -128,7 +128,7 @@ impl LapceEditorTab {
                 EditorTabChild::Editor(view_id, _, _) => {
                     data.main_split.editors.remove(&view_id);
                 }
-                EditorTabChild::Settings(_, _) => {}
+                EditorTabChild::Settings { .. } => {}
             }
         }
     }
@@ -306,7 +306,6 @@ impl Widget<LapceTabData> for LapceEditorTab {
         match event {
             Event::MouseMove(mouse_event) => {
                 self.mouse_pos = mouse_event.pos;
-                ctx.request_paint();
             }
             Event::MouseUp(mouse_event) => {
                 self.mouse_up(ctx, data, mouse_event);
@@ -653,10 +652,9 @@ impl TabRectRenderer for TabRect {
             );
         }
         ctx.draw_svg(&self.svg, rect, None);
-        let text_size = self.text_layout.size();
         ctx.draw_text(
             &self.text_layout,
-            Point::new(rect.x1 + 5.0, (size.height - text_size.height) / 2.0),
+            Point::new(rect.x1 + 5.0, self.text_layout.y_offset(size.height)),
         );
         let x = self.rect.x1;
         ctx.stroke(
@@ -697,7 +695,7 @@ impl TabRectRenderer for TabRect {
                     let doc = data.main_split.editor_doc(*editor_id);
                     doc.buffer().is_pristine()
                 }
-                EditorTabChild::Settings(_, _) => true,
+                EditorTabChild::Settings { .. } => true,
             };
 
             if !is_pristine {

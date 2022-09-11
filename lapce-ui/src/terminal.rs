@@ -6,7 +6,7 @@ use alacritty_terminal::{
     term::{cell::Flags, search::RegexSearch},
 };
 use druid::{
-    piet::{Text, TextAttribute, TextLayout, TextLayoutBuilder},
+    piet::{Text, TextAttribute, TextLayoutBuilder},
     BoxConstraints, Command, Data, Env, Event, EventCtx, FontWeight, LayoutCtx,
     LifeCycle, LifeCycleCtx, MouseEvent, PaintCtx, Point, Rect, RenderContext, Size,
     Target, UpdateCtx, Widget, WidgetExt, WidgetId, WidgetPod,
@@ -262,6 +262,7 @@ struct LapceTerminalHeader {
     icons: Vec<LapceIcon>,
     mouse_pos: Point,
     view_is_hot: bool,
+    hover_rect: Option<Rect>,
 }
 
 impl LapceTerminalHeader {
@@ -274,6 +275,7 @@ impl LapceTerminalHeader {
             icon_padding: 4.0,
             icons: Vec::new(),
             view_is_hot: false,
+            hover_rect: None,
         }
     }
 
@@ -316,9 +318,10 @@ impl LapceTerminalHeader {
         icons
     }
 
-    fn icon_hit_test(&self, mouse_event: &MouseEvent) -> bool {
+    fn icon_hit_test(&mut self, mouse_event: &MouseEvent) -> bool {
         for icon in self.icons.iter() {
             if icon.rect.contains(mouse_event.pos) {
+                self.hover_rect = Some(icon.rect);
                 return true;
             }
         }
@@ -345,11 +348,14 @@ impl Widget<LapceTabData> for LapceTerminalHeader {
         match event {
             Event::MouseMove(mouse_event) => {
                 self.mouse_pos = mouse_event.pos;
+                let hover_rect = self.hover_rect;
                 if self.icon_hit_test(mouse_event) {
                     ctx.set_cursor(&druid::Cursor::Pointer);
-                    ctx.request_paint();
                 } else {
+                    self.hover_rect = None;
                     ctx.clear_cursor();
+                }
+                if hover_rect != self.hover_rect {
                     ctx.request_paint();
                 }
             }
@@ -431,7 +437,7 @@ impl Widget<LapceTabData> for LapceTerminalHeader {
                 )
                 .build()
                 .unwrap();
-            let y = (self.height - text_layout.size().height) / 2.0;
+            let y = text_layout.y_offset(self.height);
             ctx.draw_text(&text_layout, Point::new(self.height, y));
         });
 
@@ -480,7 +486,7 @@ impl LapceTerminal {
         ctx.request_focus();
         Arc::make_mut(&mut data.terminal).active = self.widget_id;
         Arc::make_mut(&mut data.terminal).active_term_id = self.term_id;
-        data.focus = self.widget_id;
+        data.focus = Arc::new(self.widget_id);
         data.focus_area = FocusArea::Panel(PanelKind::Terminal);
         if let Some((index, position)) =
             data.panel.panel_position(&PanelKind::Terminal)
@@ -607,7 +613,6 @@ impl Widget<LapceTabData> for LapceTerminal {
         let char_size = data.config.editor_text_size(ctx.text(), "W");
         let char_width = char_size.width;
         let line_height = data.config.terminal_line_height() as f64;
-        let y_shift = (line_height - char_size.height) / 2.0;
 
         let terminal = data.terminal.terminals.get(&self.term_id).unwrap();
         let raw = terminal.raw.lock();
@@ -748,7 +753,10 @@ impl Widget<LapceTabData> for LapceTerminal {
                         .default_attribute(TextAttribute::Weight(FontWeight::BOLD));
                 }
                 let text_layout = builder.build().unwrap();
-                ctx.draw_text(&text_layout, Point::new(x, y + y_shift));
+                ctx.draw_text(
+                    &text_layout,
+                    Point::new(x, y + text_layout.y_offset(line_height)),
+                );
             }
         }
         if data.find.visual {

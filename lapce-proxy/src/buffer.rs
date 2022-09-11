@@ -189,6 +189,7 @@ pub fn language_id_from_path(path: &Path) -> Option<&'static str> {
                     }
                     "cs" | "csx" => "csharp",
                     "css" => "css",
+                    "d" | "di" | "dlang" => "dlang",
                     "diff" | "patch" => "diff",
                     "dart" => "dart",
                     "dockerfile" => "dockerfile",
@@ -218,7 +219,7 @@ pub fn language_id_from_path(path: &Path) -> Option<&'static str> {
                     "php" | "phtml" | "pht" | "phps" => "php",
                     "ps1" | "ps1xml" | "psc1" | "psm1" | "psd1" | "pssc"
                     | "psrc" => "powershell",
-                    "py" => "python",
+                    "py" | "pyi" | "pyc" | "pyd" | "pyw" => "python",
                     "r" => "r",
                     "rb" => "ruby",
                     "rs" => "rust",
@@ -240,10 +241,14 @@ pub fn language_id_from_path(path: &Path) -> Option<&'static str> {
             }
         }
         // Handle paths without extension
+        #[allow(clippy::match_single_binding)]
         None => match path.file_name()?.to_str()? {
-            "dockerfile" => "dockerfile",
-            "makefile" | "gnumakefile" => "makefile",
-            _ => return None,
+            // case-insensitive matching
+            filename => match filename.to_lowercase().as_str() {
+                "dockerfile" => "dockerfile",
+                "makefile" | "gnumakefile" => "makefile",
+                _ => return None,
+            },
         },
     })
 }

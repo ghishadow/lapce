@@ -48,9 +48,8 @@ use crate::{
     editor::view::LapceEditorView, explorer::FileExplorer, hover::HoverContainer,
     panel::PanelContainer, picker::FilePicker, plugin::Plugin,
     problem::new_problem_panel, search::new_search_panel,
-    settings::LapceSettingsPanel, source_control::new_source_control_panel,
-    split::split_data_widget, status::LapceStatus, svg::get_svg,
-    terminal::TerminalPanel, title::Title,
+    source_control::new_source_control_panel, split::split_data_widget,
+    status::LapceStatus, svg::get_svg, terminal::TerminalPanel, title::Title,
 };
 
 pub const LAPCE_TAB_META: Selector<SingleUse<LapceTabMeta>> =
@@ -82,7 +81,6 @@ pub struct LapceTab {
     rename: WidgetPod<LapceTabData, Box<dyn Widget<LapceTabData>>>,
     status: WidgetPod<LapceTabData, Box<dyn Widget<LapceTabData>>>,
     picker: WidgetPod<LapceTabData, Box<dyn Widget<LapceTabData>>>,
-    settings: WidgetPod<LapceTabData, Box<dyn Widget<LapceTabData>>>,
     about: WidgetPod<LapceTabData, Box<dyn Widget<LapceTabData>>>,
     alert: WidgetPod<LapceTabData, Box<dyn Widget<LapceTabData>>>,
     panel_left: WidgetPod<LapceTabData, PanelContainer>,
@@ -91,6 +89,7 @@ pub struct LapceTab {
     current_bar_hover: Option<PanelResizePosition>,
     width: f64,
     height: f64,
+    title_height: f64,
     status_height: f64,
     mouse_pos: Point,
 }
@@ -114,9 +113,6 @@ impl LapceTab {
                 .padding((10.0, 5.0, 10.0, 5.0));
         let status = LapceStatus::new();
         let picker = FilePicker::new(data);
-
-        let settings =
-            LapceSettingsPanel::new(data, WidgetId::next(), WidgetId::next());
 
         let about = AboutBox::new(data);
         let alert = AlertBox::new(data);
@@ -188,7 +184,6 @@ impl LapceTab {
             rename: WidgetPod::new(rename.boxed()),
             picker: WidgetPod::new(picker.boxed()),
             status: WidgetPod::new(status.boxed()),
-            settings: WidgetPod::new(settings.boxed()),
             about: WidgetPod::new(about.boxed()),
             alert: WidgetPod::new(alert.boxed()),
             panel_left: WidgetPod::new(panel_left),
@@ -198,6 +193,7 @@ impl LapceTab {
             width: 0.0,
             height: 0.0,
             status_height: 0.0,
+            title_height: 0.0,
             mouse_pos: Point::ZERO,
         }
     }
@@ -287,7 +283,19 @@ impl LapceTab {
                 PanelResizePosition::Bottom => {
                     let bottom =
                         self.height - mouse_pos.y.round() - self.status_height;
-                    Arc::make_mut(&mut data.panel).size.bottom = bottom.max(180.0);
+
+                    let header_height = data.config.ui.header_height() as f64;
+                    // The maximum position (from the bottom) that the bottom split is allowed to reach
+                    let minimum = self.height
+                        - self.title_height
+                        - self.status_height
+                        - header_height
+                        - 1.0;
+
+                    Arc::make_mut(&mut data.panel).size.bottom =
+                        bottom.max(180.0).min(minimum);
+
+                    // Check if it should snap the bottom panel away, if you are too low
                     if bottom < 90.0 {
                         if data
                             .panel
@@ -548,12 +556,11 @@ impl LapceTab {
                             rect.y0 + (size.height - height) / 2.0,
                         ));
                     ctx.draw_svg(&tab_rect.svg, svg_rect, None);
-                    let text_size = tab_rect.text_layout.size();
                     ctx.draw_text(
                         &tab_rect.text_layout,
                         Point::new(
                             rect.x0 + size.height,
-                            rect.y0 + (size.height - text_size.height) / 2.0,
+                            rect.y0 + tab_rect.text_layout.y_offset(size.height),
                         ),
                     );
                 }
@@ -699,7 +706,7 @@ impl LapceTab {
                 ctx.submit_command(Command::new(
                     LAPCE_UI_COMMAND,
                     LapceUICommand::SetWorkspace(workspace),
-                    Target::Window(data.window_id),
+                    Target::Window(*data.window_id),
                 ));
             }
             Event::Command(cmd) if cmd.is(LAPCE_OPEN_FILE) => {
@@ -1048,15 +1055,19 @@ impl LapceTab {
                             lsp_types::ProgressParamsValue::WorkDone(progress) => {
                                 match progress {
                                     lsp_types::WorkDoneProgress::Begin(begin) => {
-                                        data.progresses.push_back(WorkProgress {
-                                            token: params.token.clone(),
-                                            title: begin.title.clone(),
-                                            message: begin.message.clone(),
-                                            percentage: begin.percentage,
-                                        });
+                                        Arc::make_mut(&mut data.progresses).push(
+                                            WorkProgress {
+                                                token: params.token.clone(),
+                                                title: begin.title.clone(),
+                                                message: begin.message.clone(),
+                                                percentage: begin.percentage,
+                                            },
+                                        );
                                     }
                                     lsp_types::WorkDoneProgress::Report(report) => {
-                                        for p in data.progresses.iter_mut() {
+                                        for p in Arc::make_mut(&mut data.progresses)
+                                            .iter_mut()
+                                        {
                                             if p.token == params.token {
                                                 p.message = report.message.clone();
                                                 p.percentage = report.percentage;
@@ -1077,7 +1088,8 @@ impl LapceTab {
                                             .sorted()
                                             .rev()
                                         {
-                                            data.progresses.remove(i);
+                                            Arc::make_mut(&mut data.progresses)
+                                                .remove(i);
                                         }
                                     }
                                 }
@@ -1564,7 +1576,7 @@ impl LapceTab {
                         ctx.submit_command(Command::new(
                             LAPCE_UI_COMMAND,
                             LapceUICommand::Focus,
-                            Target::Widget(data.focus),
+                            Target::Widget(*data.focus),
                         ));
                         ctx.set_handled();
                     }
@@ -1937,7 +1949,6 @@ impl Widget<LapceTabData> for LapceTab {
         self.hover.lifecycle(ctx, event, data, env);
         self.rename.lifecycle(ctx, event, data, env);
         self.picker.lifecycle(ctx, event, data, env);
-        self.settings.lifecycle(ctx, event, data, env);
         self.about.lifecycle(ctx, event, data, env);
         self.alert.lifecycle(ctx, event, data, env);
         self.panel_left.lifecycle(ctx, event, data, env);
@@ -1964,14 +1975,14 @@ impl Widget<LapceTabData> for LapceTab {
             ctx.request_paint();
         }
 
-        if !old_data.about.active != data.about.active {
+        if old_data.about.active != data.about.active {
             ctx.request_layout();
         }
-        if !old_data.alert.active != data.alert.active {
+        if old_data.alert.active != data.alert.active {
             ctx.request_layout();
         }
 
-        if old_data
+        if !old_data
             .main_split
             .diagnostics
             .same(&data.main_split.diagnostics)
@@ -2014,7 +2025,6 @@ impl Widget<LapceTabData> for LapceTab {
         self.rename.update(ctx, data, env);
         self.status.update(ctx, data, env);
         self.picker.update(ctx, data, env);
-        self.settings.update(ctx, data, env);
         self.about.update(ctx, data, env);
         self.alert.update(ctx, data, env);
         self.panel_left.update(ctx, data, env);
@@ -2036,7 +2046,8 @@ impl Widget<LapceTabData> for LapceTab {
 
         self.title.layout(ctx, bc, data, env);
         self.title.set_origin(ctx, data, env, Point::ZERO);
-        let title_height = 36.0;
+        self.title_height = 36.0;
+        let title_height = self.title_height;
 
         let status_size = self.status.layout(ctx, bc, data, env);
         self.status.set_origin(
@@ -2302,7 +2313,6 @@ impl Widget<LapceTabData> for LapceTab {
         self.completion.paint(ctx, data, env);
         self.hover.paint(ctx, data, env);
         self.picker.paint(ctx, data, env);
-        self.settings.paint(ctx, data, env);
         ctx.incr_alpha_depth();
         self.paint_drag_on_panel(ctx, data);
         self.paint_drag(ctx, data);
@@ -2391,7 +2401,7 @@ impl Widget<LapceTabData> for LapceTabHeader {
             Event::MouseUp(mouse_event) => {
                 if mouse_event.button.is_right() {
                     let tab_id = data.id;
-                    let window_id = data.window_id;
+                    let window_id = *data.window_id;
 
                     let mut menu = druid::Menu::<LapceData>::new("Tab");
                     let item = druid::MenuItem::new("Move Tab To a New Window")
@@ -2514,7 +2524,7 @@ impl Widget<LapceTabData> for LapceTabHeader {
         let size = ctx.size();
         let text_size = text_layout.size();
         let x = (size.width - text_size.width) / 2.0;
-        let y = (size.height - text_size.height) / 2.0;
+        let y = text_layout.y_offset(size.height);
         ctx.draw_text(&text_layout, Point::new(x, y));
 
         if ctx.is_hot() {

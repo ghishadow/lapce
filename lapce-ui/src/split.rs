@@ -67,11 +67,16 @@ pub fn split_content_widget(
                         .boxed();
                         editor_tab = editor_tab.with_child(editor);
                     }
-                    EditorTabChild::Settings(widget_id, editor_tab_id) => {
+                    EditorTabChild::Settings {
+                        settings_widget_id,
+                        editor_tab_id,
+                        keymap_input_view_id,
+                    } => {
                         let settings = LapceSettingsPanel::new(
                             data,
-                            *widget_id,
+                            *settings_widget_id,
                             *editor_tab_id,
+                            *keymap_input_view_id,
                         )
                         .boxed();
                         editor_tab = editor_tab.with_child(settings);
@@ -1071,21 +1076,14 @@ impl Widget<LapceTabData> for LapceSplit {
         match event {
             Event::MouseMove(mouse_event) => {
                 if self.children.is_empty() {
-                    let mut on_command = false;
+                    ctx.clear_cursor();
                     for (_, _, rect, _) in &self.commands {
                         if rect.contains(mouse_event.pos) {
-                            on_command = true;
+                            ctx.set_cursor(&druid::Cursor::Pointer);
                             break;
                         }
                     }
-                    if on_command {
-                        ctx.set_cursor(&druid::Cursor::Pointer);
-                    } else {
-                        ctx.clear_cursor();
-                    }
-                }
-
-                if ctx.is_active() {
+                } else if ctx.is_active() {
                     // If we're active then we're probably being dragged
                     self.update_resize_point(mouse_event.pos);
                     ctx.request_layout();
@@ -1173,7 +1171,7 @@ impl Widget<LapceTabData> for LapceSplit {
                                 ));
                             } else {
                                 ctx.request_focus();
-                                data.focus = self.split_id;
+                                data.focus = Arc::new(self.split_id);
                                 data.focus_area = FocusArea::Editor;
                             }
                         }
