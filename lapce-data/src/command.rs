@@ -42,6 +42,7 @@ use crate::{
     keypress::{KeyMap, KeyPress},
     menu::MenuKind,
     palette::{PaletteItem, PaletteType},
+    plugin::{PluginsInfo, VoltIconKind},
     proxy::ProxyStatus,
     rich_text::RichText,
     search::Match,
@@ -603,11 +604,13 @@ pub enum LapceUICommand {
     UpdatePickerPwd(PathBuf),
     UpdatePickerItems(PathBuf, HashMap<PathBuf, FileNodeItem>),
     UpdateExplorerItems(PathBuf, HashMap<PathBuf, FileNodeItem>, bool),
-    LoadPlugins(Vec<VoltInfo>),
+    LoadPlugins(PluginsInfo),
     LoadPluginsFailed,
+    LoadPluginIcon(String, VoltIconKind),
     VoltInstalled(VoltMetadata, bool),
-    VoltInstalling(VoltMetadata, String),
+    VoltInstalling(VoltInfo, String),
     VoltRemoving(VoltMetadata, String),
+    VoltInstallStatusClear(String),
     VoltRemoved(VoltInfo, bool),
     EnableVolt(VoltInfo),
     DisableVolt(VoltInfo),
@@ -764,6 +767,9 @@ pub enum LapceUICommand {
     ExplorerEndNaming {
         /// Whether it should name/rename the file with the input data
         apply_naming: bool,
+    },
+    ExplorerRevealPath {
+        path: PathBuf,
     },
     FileExplorerRefresh,
     PutToClipboard(String),

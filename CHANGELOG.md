@@ -4,6 +4,20 @@
 
 ### Features/Changes
 
+- [#1646](https://github.com/lapce/lapce/pull/1646): Fork the process when started from terminal
+- [#1653](https://github.com/lapce/lapce/pull/1653): Paint plugin icons
+- [#1644](https://github.com/lapce/lapce/pull/1644): Added "Reveal in File Tree" action to the editor tabs context menu
+- [#1645](https://github.com/lapce/lapce/pull/1645): Add plugin search
+
+### Bug Fixes
+
+- [#1588](https://github.com/lapce/lapce/issues/1588): Fixed an issue where new windows would never be created after closing all windows on macOS.
+
+## 0.2.2
+
+### Features/Changes
+
+- [#1643](https://github.com/lapce/lapce/pull/1643): Use https://plugins.lapce.dev/ as the plugin registry
 - [#1620](https://github.com/lapce/lapce/pull/1620): Added "Show Hover" keybinding that will trigger the hover at the cursor location
 - [#1619](https://github.com/lapce/lapce/pull/1619):
   - Add active/inactive tab colours
@@ -11,7 +25,6 @@
   - Replace custom drawn checkboxes with icons in source control
   - Add hover effect in source control panel
   - Add colour preview in settings
-- [#1619](https://github.com/lapce/lapce/pull/1619): Add active/inactive tab colours, add primary button colour, replace custom drawn checkboxes with icons in source
 - [#1617](https://github.com/lapce/lapce/pull/1617): Fixed a stack overflow that would crash lapce when attempting to sort a large number of PaletteItems
 - [#1609](https://github.com/lapce/lapce/pull/1609): Add syntax highlighting for erlang
 - [#1590](https://github.com/lapce/lapce/pull/1590): Added ability to open file and file diff from source control context menu
@@ -22,9 +35,6 @@
   - **This is a breaking change for colour themes!**
   - Colour themes should now use `[color-theme]` table format in theme TOML
   - `volt.toml` now use `color-themes` and `icon-themes` keys. `themes` key is not used anymore.
-  - Colour themes now must specify colour preference via `[color-theme.color-preference]` key.
-    Available values are `Dark`, `Light`, `HighContrastDark` and `HighContrastLight`.
-    This is used to automatically calculate UI icons and background colours for hover/click events.
 - [#1554](https://github.com/lapce/lapce/pull/1554): Added XML language support
 - [#1472](https://github.com/lapce/lapce/pull/1472): Added SQL language support
 - [#1531](https://github.com/lapce/lapce/pull/1531): Improved Ctrl+Left command on spaces at the beginning of a line
@@ -36,7 +46,6 @@
 - [#1452](https://github.com/lapce/lapce/pull/1452): Wrap selected text with brackets/quotes
 - [#1421](https://github.com/lapce/lapce/pull/1421): Add matching bracket highlighting
 - [#1541](https://github.com/lapce/lapce/pull/1541): Order palette items according to last execute time
-
 
 ### Bug Fixes
 
