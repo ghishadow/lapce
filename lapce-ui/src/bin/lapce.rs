@@ -2,6 +2,9 @@
 
 use lapce_ui::app;
 
+#[global_allocator]
+static ALLOC: snmalloc_rs::SnMalloc = snmalloc_rs::SnMalloc;
+
 pub fn main() {
     app::launch();
 }

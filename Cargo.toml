@@ -7,6 +7,7 @@ rust-version = "1.64"
 default-run = "lapce"
 
 [dependencies]
+snmalloc-rs = { version = "0.3.0", features = ["native-cpu", "usecxx17", "build_cc"]}
 lapce-ui = { path = "./lapce-ui" }
 lapce-proxy = { path = "./lapce-proxy" }
 
