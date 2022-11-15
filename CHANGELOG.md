@@ -3,6 +3,10 @@
 ## Unreleased
 
 ### Features/Changes
+- [#1700](https://github.com/lapce/lapce/pull/1700): Add prisma syntax and highlighting
+- [#1702](https://github.com/lapce/lapce/pull/1702): Improved svelte treesitter queries
+
+- [#1690](https://github.com/lapce/lapce/pull/1690): Add codelens and sticky headers for Dart
 
 ### Bug Fixes
 
@@ -21,6 +25,7 @@
 - [#1651](https://github.com/lapce/lapce/pull/1651): Fixed an issue where new windows would never be created after closing all windows on macOS.
 - [#1637](https://github.com/lapce/lapce/issues/1637): Fix python using 7 spaces instead of 4 spaces to indent
 - [#1669](https://github.com/lapce/lapce/issues/1669): It will now remember panel states when open a new project
+- [#1706](https://github.com/lapce/lapce/issues/1706): Fix the issue that color can't be changed in theme settings
 
 ## 0.2.2
 

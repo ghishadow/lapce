@@ -174,6 +174,8 @@ pub enum LapceLanguage {
     OcamlInterface,
     #[cfg(feature = "lang-php")]
     Php,
+    #[cfg(feature = "lang-prisma")]
+    Prisma,
     #[cfg(feature = "lang-python")]
     Python,
     #[cfg(feature = "lang-ql")]
@@ -299,8 +301,16 @@ const LANGUAGES: &[SyntaxProperties] = &[
         injection: None,
         comment: "//",
         indent: "  ",
-        code_lens: (DEFAULT_CODE_LENS_LIST, DEFAULT_CODE_LENS_IGNORE_LIST),
-        sticky_headers: &[],
+        code_lens: (
+            &["program", "class_definition"],
+            &[
+                "program",
+                "import_or_export",
+                "comment",
+                "documentation_comment",
+            ],
+        ),
+        sticky_headers: &["class_definition"],
         extensions: &["dart"],
     },
     #[cfg(feature = "lang-dockerfile")]
@@ -619,6 +629,18 @@ const LANGUAGES: &[SyntaxProperties] = &[
         sticky_headers: &[],
         extensions: &["php"],
     },
+    #[cfg(feature = "lang-prisma")]
+    SyntaxProperties {
+        id: LapceLanguage::Prisma,
+        language: tree_sitter_prisma_io::language,
+        highlight: include_str!("../queries/prisma/highlights.scm"),
+        injection: None,
+        comment: "//",
+        indent: "    ",
+        code_lens: (DEFAULT_CODE_LENS_LIST, DEFAULT_CODE_LENS_IGNORE_LIST),
+        sticky_headers: &[],
+        extensions: &["prisma"],
+    },
     #[cfg(feature = "lang-python")]
     SyntaxProperties {
         id: LapceLanguage::Python,
@@ -733,8 +755,8 @@ const LANGUAGES: &[SyntaxProperties] = &[
     SyntaxProperties {
         id: LapceLanguage::Svelte,
         language: tree_sitter_svelte::language,
-        highlight: tree_sitter_svelte::HIGHLIGHT_QUERY,
-        injection: Some(tree_sitter_svelte::INJECTION_QUERY),
+        highlight: include_str!("../queries/svelte/highlights.scm"),
+        injection: Some(include_str!("../queries/svelte/injections.scm")),
         comment: "//",
         indent: "  ",
         code_lens: (DEFAULT_CODE_LENS_LIST, DEFAULT_CODE_LENS_IGNORE_LIST),
